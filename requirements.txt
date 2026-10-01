@@ -1,0 +1,1 @@
+# ComfyUI already supplies torch, numpy and Pillow. No additional packages.

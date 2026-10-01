@@ -1,0 +1,386 @@
+{
+  "last_node_id": 8,
+  "last_link_id": 8,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "title": "Source image",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png",
+        "image"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "CheckpointLoaderSimple",
+      "title": "SAM3.1 checkpoint",
+      "pos": [
+        0,
+        300
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            2,
+            5
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            3
+          ]
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CheckpointLoaderSimple"
+      },
+      "widgets_values": [
+        "sam3.1_multiplex_fp16.safetensors"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "LayersSAM3",
+      "title": "1 \u2022 Name objects (one per line)",
+      "pos": [
+        400,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        },
+        {
+          "name": "sam_model",
+          "type": "MODEL",
+          "link": 2
+        },
+        {
+          "name": "sam_clip",
+          "type": "CLIP",
+          "link": 3
+        }
+      ],
+      "outputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayersSAM3"
+      },
+      "widgets_values": [
+        "person\nchair",
+        0.5
+      ]
+    },
+    {
+      "id": 4,
+      "type": "LayersEditor",
+      "title": "2 \u2022 Edit masks and layer order",
+      "pos": [
+        800,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "link": 4
+        },
+        {
+          "name": "sam_model",
+          "type": "MODEL",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "links": [
+            6,
+            8
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayersEditor"
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 5,
+      "type": "LayersComposite",
+      "title": "Render composition",
+      "pos": [
+        1200,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "link": 6
+        }
+      ],
+      "outputs": [
+        {
+          "name": "composite_rgba",
+          "type": "IMAGE",
+          "links": [
+            7
+          ]
+        },
+        {
+          "name": "layers_rgba",
+          "type": "IMAGE",
+          "links": []
+        },
+        {
+          "name": "layer_alpha",
+          "type": "MASK",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayersComposite"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 6,
+      "type": "PreviewImage",
+      "title": "Composite preview",
+      "pos": [
+        1600,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 7
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 7,
+      "type": "LayersSave",
+      "title": "Save editable project + PNG layers",
+      "pos": [
+        1200,
+        300
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "link": 8
+        }
+      ],
+      "outputs": [
+        {
+          "name": "project_directory",
+          "type": "STRING",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayersSave"
+      },
+      "widgets_values": [
+        "layers"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "Note",
+      "title": "How to use",
+      "pos": [
+        800,
+        350
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "Note"
+      },
+      "widgets_values": [
+        "Choose an image, enter objects and Run once. Open the editor, adjust masks/order, then Apply & Run. This example exports cutouts only: no background reconstruction."
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      1,
+      "MODEL"
+    ],
+    [
+      3,
+      2,
+      1,
+      3,
+      2,
+      "CLIP"
+    ],
+    [
+      4,
+      3,
+      0,
+      4,
+      0,
+      "LAYERS_PROJECT"
+    ],
+    [
+      5,
+      2,
+      0,
+      4,
+      1,
+      "MODEL"
+    ],
+    [
+      6,
+      4,
+      0,
+      5,
+      0,
+      "LAYERS_PROJECT"
+    ],
+    [
+      7,
+      5,
+      0,
+      6,
+      0,
+      "IMAGE"
+    ],
+    [
+      8,
+      4,
+      0,
+      7,
+      0,
+      "LAYERS_PROJECT"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}
