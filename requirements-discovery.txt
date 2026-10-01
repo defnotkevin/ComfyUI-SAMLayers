@@ -1,0 +1,2 @@
+# Optional: install only for the Qwen vision-discovery workflows.
+transformers>=4.51,<5

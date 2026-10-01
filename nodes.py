@@ -51,7 +51,7 @@ def outputs(result):
     raise RuntimeError('Unsupported ComfyUI node output API; update ComfyUI.')
 
 
-def detect(model, image, clip=None, prompt='', positive=None, negative=None, threshold=.5):
+def detect(model, image, clip=None, prompt='', positive=None, negative=None, threshold=.5, bboxes=None):
     try:
         from comfy_extras.nodes_sam3 import SAM3_Detect
     except ImportError as exc:
@@ -62,7 +62,7 @@ def detect(model, image, clip=None, prompt='', positive=None, negative=None, thr
         # request multiple instances unless the user supplied a :N limit.
         detection_prompt = prompt if re.search(r':\d+\s*$', prompt) else f'{prompt}:{MAX_LAYERS}'
         conditioning = clip.encode_from_tokens_scheduled(clip.tokenize(detection_prompt))
-    result = SAM3_Detect.execute(model=model, image=image, conditioning=conditioning,
+    result = SAM3_Detect.execute(model=model, image=image, conditioning=conditioning, bboxes=bboxes,
         positive_coords=json.dumps(positive) if positive else None,
         negative_coords=json.dumps(negative) if negative else None,
         threshold=threshold, refine_iterations=1 if positive or negative else 2, individual_masks=True)
@@ -220,6 +220,94 @@ class LayersSAM3Auto:
         project = new_project(image, masks, [f'Region {i+1}' for i in range(len(masks))])
         for layer in project['state']['layers']:
             layer['discovery'] = 'automatic'
+        return (project,)
+
+
+class LayersDiscoverObjects:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {'required': {'image': ('IMAGE',),
+            'model_folder': ('STRING', {'default': 'Qwen2.5-VL-3B-Instruct'}),
+            'detail': (['whole objects', 'detailed parts'],),
+            'max_objects': ('INT', {'default': 24, 'min': 1, 'max': 64})}}
+    RETURN_TYPES = ('LAYERS_OBJECTS',)
+    FUNCTION = 'run'
+    CATEGORY = CATEGORY
+
+    def run(self, image, model_folder, detail, max_objects):
+        import folder_paths
+        from .discovery import run_vision
+        if len(image) != 1:
+            raise ValueError('Use one image for object discovery.')
+        root = (Path(folder_paths.models_dir)/'LLM').resolve()
+        path = (root/model_folder).resolve()
+        if not path.is_relative_to(root):
+            raise ValueError('Model folder must be inside ComfyUI/models/LLM/.')
+        objects = run_vision(pil(image[0], 'RGB'), path, detail, max_objects)
+        cpu = image[...,:3].detach().cpu().float()
+        signature = hashlib.sha256(cpu.contiguous().numpy().tobytes()+json.dumps(objects).encode()).hexdigest()
+        return ({'image':cpu,'objects':objects,'source':signature},)
+
+
+class LayersReviewObjects:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {'required': {'catalog': ('LAYERS_OBJECTS',),
+            'object_state': ('STRING', {'default':'','multiline':True})}}
+    RETURN_TYPES = ('LAYERS_OBJECTS',)
+    FUNCTION = 'run'
+    CATEGORY = CATEGORY
+    OUTPUT_NODE = True
+
+    def run(self, catalog, object_state):
+        from comfy_execution.graph import ExecutionBlocker
+        from .discovery import parse_objects
+        saved = json.loads(object_state or '{}')
+        if not isinstance(saved, dict):
+            raise ValueError('Invalid object review state.')
+        waiting = saved.get('source') != catalog['source']
+        objects = catalog['objects'] if waiting else parse_objects(json.dumps(saved.get('objects')))
+        state = {'source':catalog['source'],'objects':objects}
+        payload = {'state':state,'image':data_url(pil(catalog['image'][0], 'RGB')),'review_required':waiting}
+        result = ExecutionBlocker(None) if waiting else dict(catalog,objects=objects)
+        return {'ui':{'object_catalog':[payload]},'result':(result,)}
+
+
+class LayersSegmentObjects:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {'required': {'catalog': ('LAYERS_OBJECTS',), 'sam_model': ('MODEL',), 'sam_clip': ('CLIP',),
+            'threshold': ('FLOAT', {'default':.5,'min':0,'max':1,'step':.01}),
+            'duplicate_iou': ('FLOAT', {'default':.9,'min':.5,'max':1,'step':.01})}}
+    RETURN_TYPES = ('LAYERS_PROJECT',)
+    FUNCTION = 'run'
+    CATEGORY = CATEGORY
+
+    def run(self, catalog, sam_model, sam_clip, threshold, duplicate_iou):
+        from .discovery import parse_objects
+        selected = [item for item in parse_objects(json.dumps(catalog['objects'])) if item['enabled']]
+        if not selected:
+            raise ValueError('Select at least one object in Review Objects, then Apply & Run.')
+        image = catalog['image']; h,w = image.shape[1:3]
+        masks, names, kinds = [], [], []
+        for item in selected:
+            x0,y0,x1,y1 = item['bbox']
+            box = {'x':x0*w/1000,'y':y0*h/1000,'width':(x1-x0)*w/1000,'height':(y1-y0)*h/1000}
+            prompt = re.sub(r':\d+\s*$', '', item['prompt'])+':1'
+            found = detect(sam_model,image,sam_clip,prompt,threshold=threshold,bboxes=[box])
+            if not len(found) or not found.max().item():
+                raise ValueError(f"SAM3 found no mask for {item['name']}. Correct its box/description or uncheck it in Review Objects.")
+            # One prompt + box describes one instance. Never union unrelated candidates.
+            area = torch.zeros((h,w));area[int(y0*h/1000):max(int(y0*h/1000)+1,int(y1*h/1000)),int(x0*w/1000):max(int(x0*w/1000)+1,int(x1*w/1000))]=1
+            score = (found*area).sum((1,2))/(found+area-found*area).sum((1,2)).clamp_min(1)
+            mask = found[score.argmax()]
+            binary = mask>.5
+            if any(float((binary & (old>.5)).sum())/max(1,int((binary | (old>.5)).sum())) >= duplicate_iou for old in masks):
+                continue
+            masks.append(mask);names.append(item['name']);kinds.append(item['kind'])
+        project = new_project(image,torch.stack(masks),names)
+        for layer,kind in zip(project['state']['layers'],kinds):
+            layer['kind']=kind
         return (project,)
 
 
@@ -426,10 +514,10 @@ class LayersMatte:
     @classmethod
     def INPUT_TYPES(cls):
         return {'required': {'project': ('LAYERS_PROJECT',),
-            'edge_radius': ('INT', {'default': 3, 'min': 1, 'max': 16,
+            'edge_radius': ('INT', {'default': 1, 'min': 1, 'max': 16,
                 'tooltip': 'Unknown boundary width in source pixels. Keep small for fingers/hair.'}),
-            'matte_strength': ('FLOAT', {'default': 1., 'min': 0., 'max': 1., 'step': .05}),
-            'cleanup_strength': ('FLOAT', {'default': .75, 'min': 0., 'max': 1., 'step': .05}),
+            'matte_strength': ('FLOAT', {'default': .25, 'min': 0., 'max': 1., 'step': .05}),
+            'cleanup_strength': ('FLOAT', {'default': .35, 'min': 0., 'max': 1., 'step': .05}),
             'layer_index': ('INT', {'default': -1, 'min': -1, 'max': MAX_LAYERS-1,
                 'tooltip': '-1 refines all layers; otherwise use a zero-based layer index.'})}}
     RETURN_TYPES = ('LAYERS_PROJECT', 'MASK')
@@ -564,9 +652,12 @@ class LayersLoad:
         return (project,)
 
 
-NODE_CLASS_MAPPINGS = {cls.__name__: cls for cls in [LayersSAM3, LayersSAM3Auto, LayersFromMasks, LayersEditor,
+NODE_CLASS_MAPPINGS = {cls.__name__: cls for cls in [LayersDiscoverObjects, LayersReviewObjects, LayersSegmentObjects, LayersSAM3, LayersSAM3Auto, LayersFromMasks, LayersEditor,
     LayersReconstruct, LayersMatte, LayersComposite, LayersGetLayer, LayersSave, LayersLoad]}
 NODE_DISPLAY_NAME_MAPPINGS = {
+    'LayersDiscoverObjects': 'Layers • Discover Objects (Qwen VL)',
+    'LayersReviewObjects': 'Layers • Review Objects',
+    'LayersSegmentObjects': 'Layers • Segment Reviewed Objects (SAM3)',
     'LayersSAM3Auto': 'Layers • SAM3 Automatic Regions',
     'LayersSAM3': 'Layers • SAM3 Named Objects', 'LayersFromMasks': 'Layers • Import Masks',
     'LayersEditor': 'Layers • Compositor & Mask Editor', 'LayersReconstruct': 'Layers • Reconstruct',

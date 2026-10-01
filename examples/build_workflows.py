@@ -45,7 +45,7 @@ The new Layers compositor is included in SAMLayers. ComfyUI-enricos-nodes is not
     software += """
 ## Alpha matting and edge cleanup
 
-**Layers - Alpha Matte & Edge Cleanup** is included in SAMLayers. It uses CPU/PyTorch local color estimation; no extra model, package or download is needed. Start with edge_radius 3, matte_strength 1.0 and cleanup_strength 0.75. Set both strengths to zero to bypass. It refines a narrow boundary band, not large incorrectly selected background regions.
+**Layers - Alpha Matte & Edge Cleanup** is included in SAMLayers. It uses CPU/PyTorch local color estimation; no extra model, package or download is needed. Start with edge_radius 1, matte_strength 0.25 and cleanup_strength 0.35. Set both strengths to zero to bypass. It refines a narrow boundary band, not large incorrectly selected background regions.
 
 ## After installing
 
@@ -199,6 +199,11 @@ class Workflow:
         reconstruct = any(n['type'] == 'LayersReconstruct' for n in nodes)
         v4 = any(n['type'] == 'Compositor4' for n in nodes)
         notes = requirement_notes(reconstruct, v4)
+        if any(n['type'] == 'LayersDiscoverObjects' for n in nodes):
+            title,text,size=notes[0]
+            text=text.replace('No additional Python packages are required by SAMLayers.',
+                'These vision workflows additionally require requirements-discovery.txt. See the Vision discovery requirements note for the full Qwen model and setup.')
+            notes[0]=(title,text,size)
         for index, (title, text, size) in enumerate(notes):
             nodes.append({'id':len(nodes)+1, 'type':'MarkdownNote', 'title':title,
                           'pos':[-2300+index*760,0], 'size':size, 'flags':{},
@@ -223,7 +228,7 @@ def base():
 def matte(w,project,x,y=0):
     node=w.node('LayersMatte','Alpha matting and edge-color cleanup',[x,y],
                 [('project','LAYERS_PROJECT')],[('project','LAYERS_PROJECT'),('refined_alpha','MASK')],
-                [3,1.,.75,-1])
+                [1,.25,.35,-1])
     w.link(project,0,node,0)
     return node
 
@@ -265,3 +270,76 @@ comp=w.node('Compositor4','Existing Compositor V4',[2450,650],[('config','COMPOS
 w.link(v4,0,comp,0)
 w.node('Note','V4 bridge settings',[2450,1000],[],[],['Requires ComfyUI-enricos-nodes. Set Config width/height to the source image dimensions. Background uses image1; objects use image2/image3. Add Get Layer nodes for more objects (V4 has eight slots total). RGBA already includes transparency: leave mask inputs disconnected. V4 has a separate arrangement from our editor.'])
 w.save('sam3_layers_v4_bridge.json')
+
+# Semantic discovery is the primary automatic workflow. The point-grid examples
+# remain an advanced fallback and named detection remains available.
+def semantic_base():
+    w=Workflow()
+    image=w.node('LoadImage','Source image',[0,0],[],[('IMAGE','IMAGE'),('MASK','MASK')],['example.png','image'])
+    vision=w.node('LayersDiscoverObjects','1 • Discover whole objects',[400,0],[('image','IMAGE')],[('catalog','LAYERS_OBJECTS')],['Qwen2.5-VL-3B-Instruct','whole objects',24])
+    review=w.node('LayersReviewObjects','2 • Review names, boxes and selection',[800,0],[('catalog','LAYERS_OBJECTS')],[('catalog','LAYERS_OBJECTS')],[''])
+    sam=w.node('CheckpointLoaderSimple','SAM3.1 checkpoint',[800,400],[],[('MODEL','MODEL'),('CLIP','CLIP'),('VAE','VAE')],['sam3.1_multiplex_fp16.safetensors'])
+    segment=w.node('LayersSegmentObjects','3 • Segment reviewed objects',[1200,0],[('catalog','LAYERS_OBJECTS'),('sam_model','MODEL'),('sam_clip','CLIP')],[('project','LAYERS_PROJECT')],[.5,.9])
+    edit=w.node('LayersEditor','4 • Edit masks and arrange',[1600,0],[('project','LAYERS_PROJECT'),('sam_model','MODEL')],[('project','LAYERS_PROJECT')],[''])
+    w.link(image,0,vision,0);w.link(vision,0,review,0);w.link(review,0,segment,0);w.link(sam,0,segment,1);w.link(sam,1,segment,2);w.link(segment,0,edit,0);w.link(sam,0,edit,1)
+    note=w.node('MarkdownNote','Vision discovery requirements and setup',[0,750],[],[],['''# Semantic automatic discovery
+
+Use Qwen VL to list objects, review that list, then run SAM3. Whole objects is the default. Background surfaces are listed but unchecked; they are not automatically used as a reconstructed background. Review boxes and depth order: model output can be wrong.
+
+## Extra requirement for this workflow
+
+Install into the SAME Python environment that runs ComfyUI:
+
+```sh
+python -m pip install -r custom_nodes/ComfyUI-SAMLayers/requirements-discovery.txt
+```
+
+Download the full Qwen2.5-VL-3B-Instruct repository (weights, config, processor and tokenizer), not a single Qwen diffusion checkpoint:
+
+https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
+
+https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/tree/main
+
+From your ComfyUI directory, with the Hugging Face CLI installed:
+
+```sh
+hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir models/LLM/Qwen2.5-VL-3B-Instruct
+```
+
+```text
+ComfyUI/
+|-- models/
+|   |-- LLM/
+|   |   `-- Qwen2.5-VL-3B-Instruct/
+|   |       |-- config.json
+|   |       |-- preprocessor_config.json
+|   |       |-- tokenizer_config.json
+|   |       |-- tokenizer.json
+|   |       |-- model.safetensors.index.json
+|   |       `-- model-*.safetensors
+|   `-- checkpoints/
+|       `-- sam3.1_multiplex_fp16.safetensors
+`-- custom_nodes/
+    `-- ComfyUI-SAMLayers/
+        `-- requirements-discovery.txt
+```
+
+The tree is illustrative: retain ALL downloaded files with their actual names. Loading uses local files only. No model download occurs during execution. CUDA is required for this discovery node. Qwen unloads before SAM3 executes; 3090 memory usage still needs live verification.
+
+Run once, open Review object list, correct names/boxes and check the objects wanted, then Apply & Run. Later open the mask editor and Apply & Run again to render. Duplicate masks are filtered by IoU; similar but distinct objects remain separate. Automatic discovery can miss objects and does not guarantee a complete decomposition.
+'''])
+    note['size']=[720,1250]
+    return w,sam,edit
+
+w,sam,edit=semantic_base();finish(w,edit,2000)
+w.save('sam3_layers_vision_edit.json')
+w,sam,edit=semantic_base()
+model=w.node('CheckpointLoaderSimple','Choose your SD/SDXL inpainting checkpoint',[1600,400],[],[('MODEL','MODEL'),('CLIP','CLIP'),('VAE','VAE')],['SELECT_YOUR_INPAINT_CHECKPOINT.safetensors'])
+rebuild=w.node('LayersReconstruct','5 • Reconstruct background and hidden parts',[2000,0],[('project','LAYERS_PROJECT'),('model','MODEL'),('clip','CLIP'),('vae','VAE'),('sam_model','MODEL'),('sam_clip','CLIP')],[('project','LAYERS_PROJECT'),('background','IMAGE')],['empty room, continuous background, no people, no foreground objects','artifacts, duplicated objects, text, watermark',True,32,0,'fixed',25,6])
+w.link(edit,0,rebuild,0)
+for i in range(3):w.link(model,i,rebuild,i+1)
+w.link(sam,0,rebuild,4);w.link(sam,1,rebuild,5)
+refined=matte(w,rebuild,2400,0)
+arrange=w.node('LayersEditor','6 • Arrange completed layers',[2800,0],[('project','LAYERS_PROJECT'),('sam_model','MODEL')],[('project','LAYERS_PROJECT')],[''])
+w.link(refined,0,arrange,0);w.link(sam,0,arrange,1);finish(w,arrange,3200,refine=False)
+w.save('sam3_layers_vision_reconstruct.json')

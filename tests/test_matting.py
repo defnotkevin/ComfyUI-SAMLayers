@@ -21,7 +21,7 @@ class MattingTests(unittest.TestCase):
 
     def test_recovers_fractional_edge_and_reduces_halo(self):
         rgb,truth,binary,fore=self.fixture()
-        clean,alpha=refine_layer(rgb,binary,3,1.,1.)
+        clean,alpha=refine_layer(rgb,truth,3,1.,1.)
         edge=(truth>0)&(truth<1)
         self.assertLess(float((alpha[edge]-truth[edge]).abs().mean()),.02)
         self.assertLess(float((clean[edge]-fore).abs().mean()),float((rgb[edge]-fore).abs().mean())*.15)
@@ -30,6 +30,18 @@ class MattingTests(unittest.TestCase):
         self.assertTrue(torch.equal(alpha[:,:8],binary[:,:8]))
         self.assertTrue(torch.isfinite(clean).all())
         self.assertTrue(torch.all((clean>=0)&(clean<=1)))
+
+    def test_color_refinement_cannot_punch_holes_or_grow_opaque_background(self):
+        # A patterned opaque object, disconnected thin part and matching-color
+        # background reproduce the failure mode of local color classification.
+        torch.manual_seed(7)
+        rgb=torch.rand(48,64,3)
+        mask=torch.zeros(48,64);mask[8:40,10:40]=1;mask[5:42,50]=1
+        rgb[12:38:2,10:14]=rgb[0,0]
+        _,result=refine_layer(rgb,mask,8,1,1)
+        self.assertTrue(torch.all(result[mask==1]>=.9))
+        self.assertTrue(torch.all(result[mask==0]<=.1))
+        self.assertTrue(torch.equal(result>.5,mask.bool()))
 
     def test_strength_zero_and_cleanup_only(self):
         rgb,truth,binary,_=self.fixture()

@@ -18,3 +18,10 @@
 .layers-point{position:absolute;width:12px;height:12px;box-sizing:border-box;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 2px #000;}
 .layers-point-positive{background:#00bb77;}
 .layers-point-negative{background:#ff4466;}
+.objects-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(420px,1fr);gap:16px;padding:16px;overflow:auto;height:calc(100% - 90px);box-sizing:border-box;}
+.objects-preview{width:100%;height:auto;position:sticky;top:0;}
+.objects-row{display:flex;flex-wrap:wrap;gap:8px;padding:12px;margin:8px 0;border:1px solid #475569;border-radius:6px;}
+.objects-row label{display:flex;flex-direction:column;gap:4px;}
+.objects-row input:not([type=checkbox]){width:160px;}
+.objects-box{display:flex;gap:8px;flex-wrap:wrap;}
+.objects-box input{width:65px!important;}

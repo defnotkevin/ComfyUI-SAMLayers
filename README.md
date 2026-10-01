@@ -12,9 +12,90 @@ An initial implementation of SAM3 object layers, a browser compositor with popup
 4. For reconstruction, select a compatible SD/SDXL checkpoint with its matching CLIP and VAE. A dedicated inpainting checkpoint is preferable. **The Qwen layered checkpoint is not a drop-in inpainting model for this node.** No additional models are downloaded automatically.
 5. Restart ComfyUI and refresh the browser. Search the node menu for `Layers`.
 
-No additional Python dependencies are needed beyond ComfyUI's PyTorch, NumPy and Pillow. Do not replace the RunPod PyTorch install.
+The original named/point-grid workflows need no additional Python dependencies beyond ComfyUI's PyTorch, NumPy and Pillow. The semantic vision workflows additionally need `requirements-discovery.txt`. Do not replace the RunPod PyTorch install.
 
-## Automatic discovery (no object names)
+## Semantic automatic discovery (recommended automatic mode)
+
+Start with **`examples/sam3_layers_vision_edit.json`**. For background and hidden-object
+completion, use **`examples/sam3_layers_vision_reconstruct.json`** instead.
+
+Pipeline: **Qwen VL → Review Objects → SAM3 → mask editor → matting → render/save**.
+The reconstruction variant inserts reconstruction, matting and a final arrangement
+editor after source mask editing. This mode replaces point-grid sampling as the primary
+automatic option, while preserving the older workflows.
+
+### Install the optional vision dependency and model on RunPod
+
+From your actual ComfyUI directory, using the Python environment that runs ComfyUI:
+
+```sh
+python -m pip install -r custom_nodes/ComfyUI-SAMLayers/requirements-discovery.txt
+hf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir models/LLM/Qwen2.5-VL-3B-Instruct
+```
+
+The second command uses the Hugging Face CLI. If `hf` is unavailable, install its
+CLI in the same environment, or download the full repository through Hugging Face.
+Retain all configuration, processor, tokenizer, index and weight files.
+
+Model and files:
+https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
+https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/tree/main
+
+```text
+ComfyUI/
+|-- models/
+|   |-- LLM/
+|   |   `-- Qwen2.5-VL-3B-Instruct/
+|   |       |-- config.json
+|   |       |-- preprocessor_config.json
+|   |       |-- tokenizer_config.json
+|   |       |-- tokenizer.json
+|   |       |-- model.safetensors.index.json
+|   |       `-- model-*.safetensors
+|   `-- checkpoints/
+|       `-- sam3.1_multiplex_fp16.safetensors
+`-- custom_nodes/
+    `-- ComfyUI-SAMLayers/
+        `-- requirements-discovery.txt
+```
+
+The filenames shown are illustrative; keep the actual repository filenames and all
+its files. This is a full vision-language model, **not** the Qwen Image Layered
+checkpoint or its standalone ComfyUI text encoder. The runtime only loads local
+files and never downloads weights automatically. `model_folder` is relative to
+`ComfyUI/models/LLM/`. The 3B model is the default to keep discovery smaller; the same
+loader supports a separately installed Qwen2.5-VL-7B-Instruct folder.
+
+The vision node currently requires CUDA. It unloads ComfyUI-managed models before
+loading Qwen, then releases Qwen before downstream SAM3 inference. It does not keep
+both models resident intentionally. Real 3090 peak memory and detection quality
+still require validation; local tests use mocked inference. Dependency compatibility
+with your installed ComfyUI should also be checked after installation.
+
+### Use the workflow
+
+1. Choose the source image and set **whole objects** (default) or **detailed parts**.
+2. Run. Qwen proposes names, short segmentation descriptions and instance bounding boxes.
+3. Open **Review object list**. Check desired objects, rename them, change SAM descriptions,
+   edit boxes, remove duplicates or add missed objects. Click a row to see its box.
+   Boxes use `[left, top, right, bottom]` coordinates from 0–1000 over the original image.
+4. Background surfaces are labeled separately and unchecked by default. Checking one
+   makes it a normal segmented layer; it is not automatically a clean background.
+5. **Apply & Run** sends each selected description and box to SAM3 separately.
+   Nearly identical masks are discarded by IoU; unrelated candidates are never unioned.
+   If an object cannot be segmented, the node asks you to correct/uncheck it rather
+   than silently substituting a different object.
+6. Open the mask editor, review boundaries and depth order, then **Apply & Run**.
+   In the reconstruction workflow, use the final editor to arrange completed layers.
+
+The whole-object prompt explicitly asks for a person with hands, clothing and shoes
+as one object. It is guidance, not a guarantee: Qwen can miss objects, invent labels,
+return inaccurate boxes or include parts. Review remains essential. Bounding boxes
+are supplied as SAM prompts rather than hard mask crops, so they guide instance
+selection without mechanically cutting off the mask. This does not guarantee a
+complete non-overlapping decomposition or solve alpha-matting errors.
+
+## Point-grid discovery (advanced fallback)
 
 Open `examples/sam3_layers_auto_edit.json` to discover candidate regions, or
 `examples/sam3_layers_auto_reconstruct.json` for the reconstruction pipeline.
@@ -99,10 +180,23 @@ last result. To inspect masks, connect `refined_alpha` to a standard mask previe
 
 | Control | Starting value | Effect |
 |---|---|---|
-| edge_radius | 3 | Width of the uncertain boundary in source pixels (1–16). Start at 1–2 for fine fingers or hair. |
-| matte_strength | 1.0 | Blend between the original mask and estimated partial transparency. Zero keeps the original alpha. |
-| cleanup_strength | 0.75 | Strength of foreground color recovery on partially transparent edges. Zero keeps original RGB. |
+| edge_radius | 1 | Width of the uncertain boundary in source pixels (1–16). Start at 1–2 for fine fingers or hair. |
+| matte_strength | 0.25 | Blend between the original mask and estimated partial transparency. Zero keeps the original alpha. |
+| cleanup_strength | 0.35 | Strength of foreground color recovery on partially transparent edges. Zero keeps original RGB. |
 | layer_index | -1 | Process every layer. Otherwise choose a zero-based layer index. |
+
+The conservative defaults reduce fragmentation on patterned objects. Even at full
+matte strength, initially opaque pixels remain at least 0.9 alpha and initially clear
+pixels remain at most 0.1 alpha. Existing fractional alpha can change by at most 0.2
+per pass. This intentionally limits recovery from inaccurate binary masks; use local
+SAM refinement or the brush to fix actual holes and gaps.
+
+If you used an older workflow, its saved control values are not automatically changed.
+Set radius to 1, matte strength to 0.25, and cleanup to 0.35, or load a regenerated
+example. Rerun from the upstream masks: this safeguard does not reconstruct detail
+already erased in a saved project. If fragmentation remains with both strengths zero,
+inspect the incoming SAM masks. Automatic point-grid discovery may return overlapping
+object parts; named-object detection is the more controlled option for a whole person.
 
 Set both strengths to zero for an exact bypass. Transforms, groups, layer names,
 source pixels, and the reconstructed background are preserved. The output project
@@ -193,6 +287,9 @@ The workflow stores edited masks and transforms in its editor-state widget. Sour
 
 | Node | Purpose |
 |---|---|
+| Discover Objects (Qwen VL) | Local vision-language discovery of names and boxes |
+| Review Objects | Editable checklist, descriptions and boxes; pauses before segmentation |
+| Segment Reviewed Objects (SAM3) | Per-instance text + box prompts and duplicate filtering |
 | SAM3 Automatic Regions | Point-grid discovery without object names; filtered candidate masks |
 | SAM3 Named Objects | One prompt per line; separate mask for each detection |
 | Import Masks | Adapter for the supplied SAM3 workflow or any IMAGE + MASK batch |

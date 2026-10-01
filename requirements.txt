@@ -1,1 +1,2 @@
 # ComfyUI already supplies torch, numpy and Pillow. No additional packages.
+# Optional semantic vision workflows: install requirements-discovery.txt separately.

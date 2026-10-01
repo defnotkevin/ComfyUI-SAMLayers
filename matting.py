@@ -20,7 +20,7 @@ def spread_colors(rgb, known, steps):
     return colors, valid
 
 
-def refine_layer(rgb, alpha, radius=3, matte_strength=1., cleanup_strength=.75):
+def refine_layer(rgb, alpha, radius=1, matte_strength=.25, cleanup_strength=.35):
     if not 1 <= radius <= 16 or not 0 <= matte_strength <= 1 or not 0 <= cleanup_strength <= 1:
         raise ValueError('Invalid matting radius or strength')
     if rgb.ndim != 3 or rgb.shape[-1] != 3 or alpha.shape != rgb.shape[:2]:
@@ -52,6 +52,13 @@ def refine_layer(rgb, alpha, radius=3, matte_strength=1., cleanup_strength=.75):
     # Regularize ambiguous colors toward the original mask rather than inventing detail.
     estimate = (((image-back)*delta).sum(1,keepdim=True)+.001*a) / (separation+.001)
     estimate = estimate.clamp(0,1)
+    # Color similarity is not evidence that an opaque object pixel is a hole.
+    # Preserve the segmentation's hard decisions, including disconnected thin
+    # parts with no eroded foreground seed of their own. Also prevent expansion
+    # into opaque background. Existing soft alpha may move at most 0.2 per pass.
+    lower = torch.where(a >= .98, (a-.1).clamp_min(.9), (a-.2).clamp_min(0))
+    upper = torch.where(a <= .02, (a+.1).clamp_max(.1), (a+.2).clamp_max(1))
+    estimate = torch.maximum(lower, torch.minimum(upper, estimate))
     refined = torch.where(usable, a*(1-matte_strength)+estimate*matte_strength, a)
     # Only change partially transparent boundary pixels. Preserve opaque interiors.
     edge = usable & (refined > .02) & (refined < .98)
