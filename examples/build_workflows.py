@@ -152,6 +152,38 @@ class Workflow:
         self.nodes.append(n);return n
     def link(self,a,slot,b,target):
         i=len(self.links)+1;self.links.append([i,a['id'],slot,b['id'],target,a['outputs'][slot]['type']]);a['outputs'][slot]['links'].append(i);b['inputs'][target]['link']=i
+    def save_automatic(self,name):
+        workflow=deepcopy(self)
+        detect=next(n for n in workflow.nodes if n['type']=='LayersSAM3')
+        removed=detect['inputs'][2]['link']
+        detect.update(type='LayersSAM3Auto', title='1 • Discover regions automatically',
+                      inputs=detect['inputs'][:2], widgets_values=[8,.002,.95,.8,64])
+        detect['properties']['Node name for S&R']='LayersSAM3Auto'
+        remaining=[link for link in workflow.links if link[0]!=removed]
+        remap={link[0]:i+1 for i,link in enumerate(remaining)}
+        for node in workflow.nodes:
+            for inp in node['inputs']:
+                if inp['link'] is not None: inp['link']=remap.get(inp['link'])
+            for out in node['outputs']:
+                out['links']=[remap[x] for x in out['links'] if x in remap]
+            if node['type']=='Note':
+                node['widgets_values']=[text.replace('enter objects and Run once', 'Run automatic discovery once') for text in node['widgets_values']]
+        workflow.links=[[remap[link[0]],*link[1:]] for link in remaining]
+        note=workflow.node('MarkdownNote','Automatic discovery - read first',[0,650],[],[],[
+            "# Automatic region discovery\n\nNo object names or additional models are needed. "
+            "SAM3 is prompted at a grid of points and near-duplicate masks are filtered. "
+            "An 8 x 8 grid runs up to 64 separate segmentation passes; increasing density is slower.\n\n"
+            "Regions have generic names. Rename them in the editor and review overlaps and depth order before reconstruction. "
+            "This heuristic can miss small objects, split an object into parts, or include background regions. "
+            "It does not guarantee every object or a complete non-overlapping decomposition.\n\n"
+            "min_area / max_area are fractions of image area. duplicate_iou filters similar masks. "
+            "max_layers caps the number retained. Increase points_per_side to search more densely.\n\n"
+            "The node displays a source thumbnail after running. Open layer editor to select the regions you want to manipulate. "
+            "Use the floating Edit mask button on a selected object. Zoom up to 3200%; Ctrl/Cmd-wheel zooms around the pointer, "
+            "and middle-button drag pans."])
+        note['size']=[720,500]
+        workflow.save(name)
+
     def save(self,name):
         # Annotate a copy so saving the reconstruction example does not alter
         # the shared graph subsequently extended into the V4 bridge example.
@@ -193,6 +225,7 @@ def finish(w,project,x):
 w,sam,edit=base();finish(w,edit,1200)
 w.node('Note','How to use',[800,350],[],[],['Choose an image, enter objects and Run once. Open the editor, adjust masks/order, then Apply & Run. This example exports cutouts only: no background reconstruction.'])
 w.save('sam3_layers_edit.json')
+w.save_automatic('sam3_layers_auto_edit.json')
 
 w,sam,edit=base()
 model=w.node('CheckpointLoaderSimple','Choose your SD/SDXL inpainting checkpoint',[800,400],[],[('MODEL','MODEL'),('CLIP','CLIP'),('VAE','VAE')],['SELECT_YOUR_INPAINT_CHECKPOINT.safetensors'])
@@ -204,6 +237,7 @@ arrange=w.node('LayersEditor','4 • Arrange reconstructed layers',[1600,0],[('p
 w.link(rebuild,0,arrange,0);w.link(sam,0,arrange,1);finish(w,arrange,2000)
 w.node('Note','Two editing stages',[1200,450],[],[],['Set the inpainting checkpoint and background prompt before running. First editor: masks, completion regions, depth order. Second editor: arrange cached reconstructed layers. Change masks in the FIRST editor to regenerate hidden content. Then open the second editor again. Each editor pauses on new source data.'])
 w.save('sam3_layers_reconstruct.json')
+w.save_automatic('sam3_layers_auto_reconstruct.json')
 
 # Existing V4 accepts RGBA IMAGE sockets, avoiding its inverse-mask convention.
 v4=w.node('CompositorConfig4','Optional • Existing Compositor V4 bridge',[2000,650],sum(([('image'+str(i),'IMAGE'),('mask'+str(i),'MASK')]for i in range(1,9)),[]),[('config','COMPOSITOR_CONFIG')],[512,512,0,False,False,False,'PNG Level 0 (fastest)','output'])

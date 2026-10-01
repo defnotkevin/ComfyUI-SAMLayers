@@ -133,6 +133,35 @@ class LayersTests(unittest.TestCase):
         self.assertEqual(state['layers'][0]['x'], 42)
         self.assertEqual(state['layers'][0]['mask'], new_mask)
 
+    def test_automatic_discovery_filters_duplicates_and_size(self):
+        image = torch.zeros(1,16,24,3)
+        a = torch.zeros(16,24); a[2:6,2:6] = 1
+        b = torch.zeros(16,24); b[8:14,12:20] = 1
+        tiny = torch.zeros(16,24); tiny[0,0] = 1
+        results = [torch.stack([a,a.clone(),tiny]), torch.stack([b]),
+                   torch.ones(1,16,24), torch.stack([a])]
+        fake = types.ModuleType('comfy')
+        fake.model_management = types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
+        fake.utils = types.SimpleNamespace(ProgressBar=lambda total:types.SimpleNamespace(update=lambda n:None))
+        with patch.dict(sys.modules, {'comfy':fake,'comfy.model_management':fake.model_management,'comfy.utils':fake.utils}), patch.object(nodes,'detect',side_effect=results) as detector:
+            masks=nodes.automatic_masks(image,None,2,.01,.9,.8,64)
+        self.assertEqual(len(masks),2)
+        self.assertTrue(torch.equal(masks[0],b))
+        self.assertTrue(torch.equal(masks[1],a))
+        self.assertEqual(detector.call_count,4)
+        self.assertTrue(all('positive' in call.kwargs for call in detector.call_args_list))
+
+    def test_automatic_discovery_stops_at_limit(self):
+        image=torch.zeros(1,16,24,3); mask=torch.zeros(1,16,24);mask[:,2:8,2:8]=1
+        fake=types.ModuleType('comfy')
+        fake.model_management=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
+        fake.utils=types.SimpleNamespace(ProgressBar=lambda total:types.SimpleNamespace(update=lambda n:None))
+        with patch.dict(sys.modules, {'comfy':fake,'comfy.model_management':fake.model_management,'comfy.utils':fake.utils}), patch.object(nodes,'detect',return_value=mask) as detector:
+            result=nodes.LayersSAM3Auto().run(image,None,8,.002,.95,.8,1)[0]
+        self.assertEqual(detector.call_count,1)
+        self.assertEqual(result['state']['layers'][0]['discovery'],'automatic')
+        self.assertEqual(result['state']['layers'][0]['name'],'Region 1')
+
     def test_native_inpaint_padding_and_unchanged_pixels(self):
         image=torch.ones(1,13,19,3)*.2;mask=torch.zeros(1,13,19);mask[:,3:6,4:8]=1
         seen={}

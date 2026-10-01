@@ -1,4 +1,6 @@
+import { addZoomControls } from './zoom.js';
 import { app } from '../../scripts/app.js';
+import { hideEditorState, editorStatus } from './editor_status.js';
 import { layerMatrix, matrix, invertPoint, ungroup } from './math.js';
 
 const clone = x => JSON.parse(JSON.stringify(x));
@@ -26,19 +28,20 @@ class Editor {
         const toolbar=el('div',null,left,'layers-toolbar');
         button(toolbar,'Undo',()=>this.undo());button(toolbar,'Redo',()=>this.redo());
         button(toolbar,'Group selected',()=>this.group());button(toolbar,'Ungroup',()=>this.ungroup());
-        button(toolbar,'Edit mask',()=>this.editSelected());
-        this.zoom=el('input',null,toolbar);this.zoom.type='range';this.zoom.min=10;this.zoom.max=200;this.zoom.value=60;
-        this.zoom.title='Zoom';this.zoom.oninput=()=>this.resize();
         this.scroll=el('div',null,left,'layers-scroll');
-        this.view=canvas(this.state.width,this.state.height);this.scroll.append(this.view);
+        this.stage=el('div',null,this.scroll,'layers-stage');
+        this.view=canvas(this.state.width,this.state.height);this.stage.append(this.view);
+        this.floatingEdit=button(this.stage,'Edit mask',()=>this.editSelected());
+        this.floatingEdit.className='layers-floating-edit';this.floatingEdit.hidden=true;
+        this.zoomControl=addZoomControls(toolbar,this.scroll,this.view,()=>this.positionEditButton());
         this.side=el('aside',null,this.body);
         this.dialog.addEventListener('cancel',()=>this.close());this.dialog.showModal();
         this.original=await load(this.payload.image);
         this.background=this.payload.background ? await load(this.payload.background):null;
         this.rgb=new Map();
         for(let i=0;i<this.state.layers.length;i++) this.rgb.set(this.state.layers[i].id,this.payload.rgbs ? await load(this.payload.rgbs[i]):this.original);
-        await this.rebuild();this.resize();this.bindViewport();this.list();this.draw();
-        this.status.textContent=this.payload.reconstructed?'Reconstructed layers · drag to arrange':'Edit masks and back-to-front order, then Apply & Run to reconstruct';
+        await this.rebuild();this.zoomControl.fit();this.bindViewport();this.list();this.draw();
+        this.status.textContent=this.payload.reconstructed?'Reconstructed layers · drag to arrange':'Edit masks and layer order, then Apply & Run to continue';
     }
     close() {this.maskDialog?.close();this.maskDialog?.remove();this.dialog?.close();this.dialog?.remove();this.node._layersEditor=null;}
     snapshot() {this.history.push(JSON.stringify(this.state));if(this.history.length>20)this.history.shift();this.future=[];}
@@ -50,20 +53,38 @@ class Editor {
         for(const layer of this.state.layers){
             const mask=await load(layer.mask),c=canvas(this.state.width,this.state.height),ctx=c.getContext('2d');
             ctx.drawImage(mask,0,0);const pixels=ctx.getImageData(0,0,c.width,c.height),alpha=new Uint8Array(c.width*c.height);
-            for(let p=0;p<alpha.length;p++){alpha[p]=pixels.data[p*4];pixels.data[p*4+3]=alpha[p];pixels.data[p*4]=pixels.data[p*4+1]=pixels.data[p*4+2]=255;}
+            let bounds=[c.width,c.height,-1,-1];
+            for(let p=0;p<alpha.length;p++){alpha[p]=pixels.data[p*4];if(alpha[p]>20){const x=p%c.width,y=Math.floor(p/c.width);if(x<bounds[0])bounds[0]=x;if(y<bounds[1])bounds[1]=y;if(x+1>bounds[2])bounds[2]=x+1;if(y+1>bounds[3])bounds[3]=y+1;}pixels.data[p*4+3]=alpha[p];pixels.data[p*4]=pixels.data[p*4+1]=pixels.data[p*4+2]=255;}
             ctx.putImageData(pixels,0,0);ctx.globalCompositeOperation='source-in';ctx.drawImage(this.rgb.get(layer.id)||this.original,0,0);ctx.globalCompositeOperation='source-over';
-            this.assets.set(layer.id,{canvas:c,alpha});
+            this.assets.set(layer.id,{canvas:c,alpha,bounds});
         }
     }
-    resize(){this.view.style.width=`${this.state.width*Number(this.zoom.value)/100}px`;this.view.style.height='auto';}
+    positionEditButton(){
+        if(!this.floatingEdit)return;
+        const layer=this.state.layers.find(l=>this.selected.has(l.id));
+        const bounds=layer&&this.assets?.get(layer.id)?.bounds;
+        this.floatingEdit.hidden=true;
+        if(this.selected.size!==1||!bounds||bounds[2]<0||layer.visible===false||this.state.groups[layer.group]?.visible===false)return;
+        const m=layerMatrix(layer,this.state),r=this.view.getBoundingClientRect(),v=this.scroll.getBoundingClientRect();
+        const corners=[[bounds[0],bounds[1]],[bounds[2],bounds[1]],[bounds[0],bounds[3]],[bounds[2],bounds[3]]].map(([x,y])=>[r.left+(m[0]*x+m[2]*y+m[4])*r.width/this.view.width,r.top+(m[1]*x+m[3]*y+m[5])*r.height/this.view.height]);
+        const left=Math.max(v.left+8,Math.min(...corners.map(p=>p[0]))),right=Math.min(v.right-8,Math.max(...corners.map(p=>p[0])));
+        const top=Math.max(v.top+8,Math.min(...corners.map(p=>p[1]))),bottom=Math.min(v.bottom-8,Math.max(...corners.map(p=>p[1])));
+        if(right<left||bottom<top)return;
+        this.floatingEdit.hidden=false;this.floatingEdit.title=`Edit mask: ${layer.name}`;
+        const x=Math.max(v.left+8,Math.min((left+right)/2-this.floatingEdit.offsetWidth/2,v.right-this.floatingEdit.offsetWidth-8));
+        this.floatingEdit.style.left=`${x-r.left}px`;this.floatingEdit.style.top=`${top-r.top}px`;
+    }
     draw(){
         const ctx=this.view.getContext('2d');ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,this.view.width,this.view.height);
         if(this.background)ctx.drawImage(this.background,0,0);
         else {ctx.globalAlpha=.35;ctx.drawImage(this.original,0,0);ctx.globalAlpha=1;}
         for(const layer of this.state.layers){
             if(layer.visible===false||this.state.groups[layer.group]?.visible===false)continue;
-            ctx.save();ctx.setTransform(...layerMatrix(layer,this.state));ctx.drawImage(this.assets.get(layer.id).canvas,0,0);ctx.restore();
+            ctx.save();ctx.setTransform(...layerMatrix(layer,this.state));ctx.drawImage(this.assets.get(layer.id).canvas,0,0);
+            if(this.selected.has(layer.id)){const b=this.assets.get(layer.id).bounds;if(b[2]>=0){ctx.strokeStyle='#38bdf8';ctx.lineWidth=2/Math.max(.01,Math.hypot(...layerMatrix(layer,this.state).slice(0,2)));ctx.strokeRect(b[0],b[1],b[2]-b[0],b[3]-b[1]);}}
+            ctx.restore();
         }
+        this.positionEditButton();
     }
     point(event,target=this.view){const r=target.getBoundingClientRect();return[(event.clientX-r.left)*target.width/r.width,(event.clientY-r.top)*target.height/r.height];}
     hit(x,y){
@@ -76,7 +97,7 @@ class Editor {
     bindViewport(){
         let drag=null;
         this.view.onpointerdown=e=>{
-            const p=this.point(e),l=this.hit(...p);if(!l){this.selected.clear();this.list();return;}
+            if(e.button!==0)return;const p=this.point(e),l=this.hit(...p);if(!l){this.selected.clear();this.list();return;}
             if(e.shiftKey){if(this.selected.has(l.id))this.selected.delete(l.id);else this.selected.add(l.id);this.list();return;}
             if(!this.selected.has(l.id)){this.selected.clear();this.selected.add(l.id);}
             const targets=new Map();for(const a of this.state.layers.filter(x=>this.selected.has(x.id)))targets.set(a.group||a.id,a.group?this.state.groups[a.group]:a);
@@ -88,6 +109,7 @@ class Editor {
         this.view.ondblclick=e=>{const l=this.hit(...this.point(e));if(l)this.maskPopup(l);};
     }
     list(){
+        this.draw();
         this.side.replaceChildren();el('h3','Layers · front to back',this.side);
         el('p','Shift-click to select several. Double-click an object to edit its mask.',this.side,'layers-help');
         const groupSeen=new Set();
@@ -148,9 +170,9 @@ class Editor {
         const mode=el('select',null,toolbar);for(const[v,t]of[['mask','Object mask'],['completion','Hidden area to reconstruct']]){const o=el('option',t,mode);o.value=v;}
         const sizeLabel=el('label','Brush ',toolbar),size=el('input',null,sizeLabel);size.type='range';size.min=1;size.max=200;size.value=30;
         const softLabel=el('label','Softness ',toolbar),soft=el('input',null,softLabel);soft.type='range';soft.min=0;soft.max=1;soft.step=.05;soft.value=.2;
-        const zoom=el('input',null,toolbar);zoom.type='range';zoom.min=10;zoom.max=200;zoom.value=65;zoom.title='Zoom';
         const help=el('p','Draw adds pixels. Erase removes them. Point refinement runs SAM3 when requested; apply brush corrections afterwards.',main,'layers-help');
         const scroll=el('div',null,main,'layers-scroll'),view=canvas(this.state.width,this.state.height);scroll.append(view);
+        const zoomControl=addZoomControls(toolbar,scroll,view);
         const planes={mask:canvas(view.width,view.height),completion:canvas(view.width,view.height)};
         for(const key of Object.keys(planes)){const ctx=planes[key].getContext('2d');ctx.fillStyle='black';ctx.fillRect(0,0,view.width,view.height);if(layer[key])ctx.drawImage(await load(layer[key]),0,0);}
         let points={positive:clone(layer.positive||[]),negative:clone(layer.negative||[])},history=[],future=[],drawing=false,last=null;
@@ -165,13 +187,12 @@ class Editor {
         };
         const stamp=(x,y)=>{const ctx=planes[mode.value].getContext('2d'),r=Number(size.value)/2,color=tool.value==='erase'?'0,0,0':'255,255,255',s=Number(soft.value);ctx.fillStyle=`rgb(${color})`;if(s>0){const g=ctx.createRadialGradient(x,y,r*(1-s),x,y,r);g.addColorStop(0,`rgba(${color},1)`);g.addColorStop(1,`rgba(${color},0)`);ctx.fillStyle=g;}ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();};
         view.onpointerdown=e=>{
-            remember();const [x,y]=this.point(e,view);if(tool.value==='positive'||tool.value==='negative'){points[tool.value].push({x:Math.round(x),y:Math.round(y)});draw();return;}
+            if(e.button!==0)return;remember();const [x,y]=this.point(e,view);if(tool.value==='positive'||tool.value==='negative'){points[tool.value].push({x:Math.round(x),y:Math.round(y)});draw();return;}
             drawing=true;last=[x,y];view.setPointerCapture(e.pointerId);stamp(x,y);draw();
         };
         view.onpointermove=e=>{if(!drawing)return;const p=this.point(e,view),dx=p[0]-last[0],dy=p[1]-last[1],n=Math.max(1,Math.ceil(Math.hypot(dx,dy)/Math.max(1,Number(size.value)/8)));for(let i=1;i<=n;i++)stamp(last[0]+dx*i/n,last[1]+dy*i/n);last=p;draw();};
         view.onpointerup=()=>drawing=false;view.onpointercancel=()=>drawing=false;
         mode.onchange=()=>{help.textContent=mode.value==='completion'?'Paint where this object should continue behind other objects. Black leaves the area unchanged.':'Blue shows included object pixels. Clicks refine SAM3; brushes edit the mask directly.';draw();};
-        zoom.oninput=()=>{view.style.width=`${view.width*Number(zoom.value)/100}px`;view.style.height='auto';};zoom.oninput();
         button(toolbar,'Undo',async()=>{if(history.length){future.push(snapshot());await restore(history.pop());}});
         button(toolbar,'Redo',async()=>{if(future.length){history.push(snapshot());await restore(future.pop());}});
         button(toolbar,'Clear clicks',()=>{remember();points={positive:[],negative:[]};draw();});
@@ -181,7 +202,7 @@ class Editor {
             if(nonzero)layer.completion=planes.completion.toDataURL();else delete layer.completion;};
         button(head,'Apply',async()=>{apply();close();await this.refresh();});
         button(head,'Refine clicks with SAM3',async()=>{if(!points.positive.length){help.textContent='Add at least one positive point inside the object.';return;}apply();close();await this.commit(layer.id);});
-        popup.showModal();draw();
+        popup.showModal();zoomControl.fit();draw();
     }
 }
 
@@ -192,17 +213,38 @@ app.registerExtension({
         const created=nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated=function(){
             const result=created?.apply(this,arguments);
+            hideEditorState(this);
+            const status = document.createElement('div');
+            status.className = 'layers-node-status';
+            status.textContent = editorStatus(null);
+            this._layersStatus = status;
+            const panel=document.createElement('div');panel.className='layers-node-panel';
+            const thumbnail=document.createElement('img');thumbnail.className='layers-node-thumbnail';thumbnail.alt='Source image for layer editing';thumbnail.hidden=true;
+            this._layersThumbnail=thumbnail;panel.append(thumbnail,status);
+            this.addDOMWidget('layers_status', 'layers_status', panel, {
+                serialize: false, hideOnZoom: false,
+                getMinHeight: () => 260, getMaxHeight: () => 340,
+            });
             this.addWidget('button','Open layer editor',null,async()=>{
                 if(this._layersEditor)return;
                 if(!this._layersPayload){app.extensionManager?.toast?.add({severity:'info',summary:'Layers',detail:'Run the workflow once to load images and masks.'});return;}
                 const editor=new Editor(this,this._layersPayload);this._layersEditor=editor;
                 try{await editor.open();}catch(error){editor.close();console.error(error);app.extensionManager?.toast?.add({severity:'error',summary:'Layers',detail:error.message});}
             });
-            this.addWidget('button','Reset editing state',null,()=>{const w=this.widgets.find(w=>w.name==='editor_state');w.value='';this._layersPayload=null;this.graph?.setDirtyCanvas(true,true);});
+            this.addWidget('button','Reset editing state',null,()=>{const w=this.widgets.find(w=>w.name==='editor_state');w.value='';this._layersPayload=null;this._layersStatus.textContent=editorStatus(null);this._layersThumbnail.hidden=true;this._layersThumbnail.removeAttribute('src');this.graph?.setDirtyCanvas(true,true);});
+            return result;
+        };
+        const configured=nodeType.prototype.onConfigure;
+        nodeType.prototype.onConfigure=function(){
+            const result=configured?.apply(this,arguments);
+            hideEditorState(this);
             return result;
         };
         const executed=nodeType.prototype.onExecuted;
         nodeType.prototype.onExecuted=function(message){executed?.apply(this,arguments);const payload=message?.layers_project?.[0];if(!payload)return;this._layersPayload=payload;
+            hideEditorState(this);
+            this._layersStatus.textContent=editorStatus(payload);
+            this._layersThumbnail.src=payload.image;this._layersThumbnail.hidden=false;
             // Save refined masks in the workflow, but do not auto-queue: review first.
             const w=this.widgets.find(w=>w.name==='editor_state');w.value=JSON.stringify(payload.state);
             this.graph?.setDirtyCanvas(true,true);

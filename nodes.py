@@ -99,8 +99,8 @@ def new_project(image, masks, names):
     return dict(source=source, image=image, masks=masks, state=state)
 
 
-def ui_payload(project, state):
-    payload = dict(state=state, image=data_url(pil(project['image'][0], 'RGB')),
+def ui_payload(project, state, review_required=False):
+    payload = dict(state=state, review_required=review_required, image=data_url(pil(project['image'][0], 'RGB')),
                    reconstructed=bool(project.get('background') is not None))
     if project.get('background') is not None:
         payload['background'] = data_url(pil(project['background'][0], 'RGB'))
@@ -150,6 +150,79 @@ class LayersSAM3:
         return (new_project(image, torch.stack(masks), names),)
 
 
+def automatic_masks(image, sam_model, points_per_side=8, min_area=.002,
+                    max_area=.95, duplicate_iou=.8, max_layers=64):
+    """Sample independent point prompts, retaining distinct foreground regions.
+
+    This is a discovery heuristic, not SAM3 semantic all-object enumeration.
+    Native SAM3_Detect does not expose a cached/batched point-grid generator.
+    """
+    import comfy.model_management
+    import comfy.utils
+    if len(image) != 1:
+        raise ValueError('Select one source image.')
+    if not 2 <= points_per_side <= 16 or not 1 <= max_layers <= MAX_LAYERS:
+        raise ValueError('Invalid automatic discovery limits.')
+    if not 0 <= min_area < max_area <= 1 or not 0 < duplicate_iou <= 1:
+        raise ValueError('Invalid automatic mask filters.')
+    h, w = image.shape[1:3]
+    found, signatures = [], []
+    progress = comfy.utils.ProgressBar(points_per_side**2)
+    for row in range(points_per_side):
+        for col in range(points_per_side):
+            comfy.model_management.throw_exception_if_processing_interrupted()
+            point = {'x': min(w-1, int((col+.5)*w/points_per_side)),
+                     'y': min(h-1, int((row+.5)*h/points_per_side))}
+            candidates = detect(sam_model, image, positive=[point])
+            for candidate in candidates:
+                mask = candidate > .5
+                area = float(mask.float().mean())
+                if not min_area <= area <= max_area:
+                    continue
+                # Compact signatures limit CPU/memory cost of duplicate comparisons.
+                small = torch.nn.functional.interpolate(mask[None,None].float(),
+                        size=(128,128), mode='nearest')[0,0] > .5
+                if not small.any():
+                    continue
+                if any(float((small & old).sum()) / max(1, int((small | old).sum())) >= duplicate_iou
+                       for old in signatures):
+                    continue
+                found.append(candidate)
+                signatures.append(small)
+                if len(found) == max_layers:
+                    break
+            progress.update(1)
+            if len(found) == max_layers:
+                break
+        if len(found) == max_layers:
+            break
+    if not found:
+        raise ValueError('No automatic masks passed the filters. Increase grid density or lower min_area; named detection is also available.')
+    # Larger regions behind smaller parts makes overlapping proposals inspectable.
+    return torch.stack(sorted(found, key=lambda mask: float(mask.sum()), reverse=True))
+
+
+class LayersSAM3Auto:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {'required': {'image': ('IMAGE',), 'sam_model': ('MODEL',),
+            'points_per_side': ('INT', {'default': 8, 'min': 2, 'max': 16}),
+            'min_area': ('FLOAT', {'default': .002, 'min': 0, 'max': .5, 'step': .001}),
+            'max_area': ('FLOAT', {'default': .95, 'min': .01, 'max': 1, 'step': .01}),
+            'duplicate_iou': ('FLOAT', {'default': .8, 'min': .1, 'max': 1, 'step': .05}),
+            'max_layers': ('INT', {'default': 64, 'min': 1, 'max': MAX_LAYERS})}}
+    RETURN_TYPES = ('LAYERS_PROJECT',)
+    FUNCTION = 'run'
+    CATEGORY = CATEGORY
+
+    def run(self, image, sam_model, points_per_side, min_area, max_area, duplicate_iou, max_layers):
+        masks = automatic_masks(image, sam_model, points_per_side, min_area, max_area, duplicate_iou, max_layers)
+        project = new_project(image, masks, [f'Region {i+1}' for i in range(len(masks))])
+        for layer in project['state']['layers']:
+            layer['discovery'] = 'automatic'
+        return (project,)
+
+
 class LayersFromMasks:
     @classmethod
     def INPUT_TYPES(cls):
@@ -192,7 +265,7 @@ class LayersEditor:
                         for key in ('x', 'y', 'scale', 'angle', 'group', 'visible'):
                             if key in old[layer['id']]: layer[key] = old[layer['id']][key]
                     parse_state(json.dumps(fresh), fresh['source'], list(old))
-            return {'ui': ui_payload(project, fresh), 'result': (ExecutionBlocker(None),)}
+            return {'ui': ui_payload(project, fresh, review_required=True), 'result': (ExecutionBlocker(None),)}
         if (state.get('width'), state.get('height')) != (project['state']['width'], project['state']['height']):
             raise ValueError('Editor dimensions changed; reset editor.')
         request = state.pop('refine', None)
@@ -210,7 +283,7 @@ class LayersEditor:
             intersection = (candidates * old).sum(dim=(1, 2))
             union = (candidates + old - candidates * old).sum(dim=(1, 2)).clamp_min(1)
             layer['mask'] = data_url(pil(candidates[(intersection/union).argmax()], 'L'))
-            return {'ui': ui_payload(project, state), 'result': (ExecutionBlocker(None),)}
+            return {'ui': ui_payload(project, state, review_required=True), 'result': (ExecutionBlocker(None),)}
         return {'ui': ui_payload(project, state), 'result': (edited_project(project, state),)}
 
 
@@ -280,10 +353,20 @@ class LayersReconstruct:
                 if hole.max().item() <= 0:
                     continue
                 description = re.sub(r" #\d+$", "", layer["name"])
+                if layer.get('discovery') == 'automatic' and re.fullmatch(r'Region \d+', description):
+                    description = 'the visible object'
                 prompt = f"{description}, complete intact object, natural continuation of visible shape and texture"
                 completed = inpaint(image, hole.unsqueeze(0), model, clip, vae, prompt, negative_prompt,
                                     (seed+i+1) % (2**64), steps, cfg)
-                candidates = detect(sam_model, completed, sam_clip, re.sub(r' #\d+$', '', layer['name']))
+                if layer.get('discovery') == 'automatic':
+                    # A region label is not a semantic object description. Use a
+                    # visible interior point to resegment its completed pixels.
+                    padded = torch.nn.functional.pad(original[None,None], (3,3,3,3))
+                    interior = torch.nn.functional.avg_pool2d(padded, 7, stride=1)[0,0] * original
+                    index = int(interior.argmax())
+                    candidates = detect(sam_model, completed, positive=[{'x': index % w, 'y': index // w}])
+                else:
+                    candidates = detect(sam_model, completed, sam_clip, re.sub(r' #\d+$', '', layer['name']))
                 if not len(candidates) or not candidates.max().item():
                     raise ValueError(f"Could not segment reconstructed {layer['name']}; adjust its completion region/prompt.")
                 score = (candidates*original).sum((1,2)) / (candidates+original-candidates*original).sum((1,2)).clamp_min(1)
@@ -420,9 +503,10 @@ class LayersLoad:
         return (project,)
 
 
-NODE_CLASS_MAPPINGS = {cls.__name__: cls for cls in [LayersSAM3, LayersFromMasks, LayersEditor,
+NODE_CLASS_MAPPINGS = {cls.__name__: cls for cls in [LayersSAM3, LayersSAM3Auto, LayersFromMasks, LayersEditor,
     LayersReconstruct, LayersComposite, LayersGetLayer, LayersSave, LayersLoad]}
 NODE_DISPLAY_NAME_MAPPINGS = {
+    'LayersSAM3Auto': 'Layers • SAM3 Automatic Regions',
     'LayersSAM3': 'Layers • SAM3 Named Objects', 'LayersFromMasks': 'Layers • Import Masks',
     'LayersEditor': 'Layers • Compositor & Mask Editor', 'LayersReconstruct': 'Layers • Reconstruct',
     'LayersComposite': 'Layers • Render', 'LayersGetLayer': 'Layers • Get Layer (V4 Bridge)',

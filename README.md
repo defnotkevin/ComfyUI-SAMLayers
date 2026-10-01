@@ -2,7 +2,7 @@
 
 An initial implementation of SAM3 object layers, a browser compositor with popup mask editing, and background/hidden-object reconstruction. Built for a ComfyUI server such as a RunPod 3090 instance; the editor runs in your browser.
 
-**Status:** local CPU processing and transform tests pass. Actual SAM3/diffusion inference and live ComfyUI frontend integration still require validation on RunPod. This is an experimental first version, not a GPU-validated release.
+**Status:** named SAM3 detection and the original editor have been confirmed working by the user on RunPod. Local CPU processing and JavaScript tests pass. The new zoom/thumbnail controls, automatic discovery, and diffusion reconstruction still need live RunPod validation. This remains experimental.
 
 ## Install on RunPod
 
@@ -13,6 +13,46 @@ An initial implementation of SAM3 object layers, a browser compositor with popup
 5. Restart ComfyUI and refresh the browser. Search the node menu for `Layers`.
 
 No additional Python dependencies are needed beyond ComfyUI's PyTorch, NumPy and Pillow. Do not replace the RunPod PyTorch install.
+
+## Automatic discovery (no object names)
+
+Open `examples/sam3_layers_auto_edit.json` to discover candidate regions, or
+`examples/sam3_layers_auto_reconstruct.json` for the reconstruction pipeline.
+These use **Layers • SAM3 Automatic Regions** with the same SAM3.1 checkpoint.
+Existing named-object workflows remain available for targeted selection.
+
+Automatic discovery samples individual point prompts across a grid, filters tiny
+and almost-full-image masks, and removes near-duplicates by intersection-over-union.
+The default 8 x 8 grid runs up to 64 separate SAM3 passes, so it can be substantially
+slower than named detection. `points_per_side` controls density, `min_area` and
+`max_area` are fractions of image area, `duplicate_iou` controls duplicate removal,
+and `max_layers` limits output (maximum 64).
+
+This is a point-grid heuristic, not a guarantee of finding every semantic object.
+It can miss small objects, return parts or overlapping regions, and leave some
+pixels uncovered. Results have generic region names; rename them and review depth
+order before reconstruction. Select the regions you want to manipulate in the
+editor. For automatic regions, reconstruction uses a visible point to resegment
+the generated object instead of treating a generic region number as a text prompt.
+
+## Detailed editing and node preview
+
+After detection, the editor node displays the source-image thumbnail, detected
+layer names, and whether it is paused for review. The internal JSON remains saved
+in the workflow but is hidden from the node. Click **Open layer editor**, then
+**Apply & Run** to continue to render/save; blank downstream previews before applying
+are expected.
+
+Both canvases support **10–3200% zoom**, an exact percentage field, plus/minus,
+100%, and Fit controls. **Ctrl/Cmd + wheel** zooms around the pointer;
+**middle-button drag** pans without moving a layer or painting. Normal scrolling
+also pans. Brushes still operate in source-image pixels, so a 1-pixel brush is
+usable at high zoom.
+
+Select one visible object to show a floating **Edit mask** button over its bounding
+area. The button follows movement, transforms, scrolling and zoom. The right-hand
+Mask buttons and viewport double-click remain available. The former top-toolbar
+Edit mask button has been removed.
 
 ## Start with the editing workflow
 
@@ -80,6 +120,7 @@ The workflow stores edited masks and transforms in its editor-state widget. Sour
 
 | Node | Purpose |
 |---|---|
+| SAM3 Automatic Regions | Point-grid discovery without object names; filtered candidate masks |
 | SAM3 Named Objects | One prompt per line; separate mask for each detection |
 | Import Masks | Adapter for the supplied SAM3 workflow or any IMAGE + MASK batch |
 | Compositor & Mask Editor | Layer arrangement, groups, brush edits and queued SAM3 clicks |
@@ -92,7 +133,7 @@ The workflow stores edited masks and transforms in its editor-state widget. Sour
 
 ```sh
 python -m unittest discover -s tests -v
-node --test tests/math.test.js
+node --test tests/*.test.js
 node --check web/layers.js
 ```
 

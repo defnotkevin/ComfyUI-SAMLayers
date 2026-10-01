@@ -1,0 +1,489 @@
+{
+  "last_node_id": 12,
+  "last_link_id": 7,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImage",
+      "title": "Source image",
+      "pos": [
+        0,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png",
+        "image"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "CheckpointLoaderSimple",
+      "title": "SAM3.1 checkpoint",
+      "pos": [
+        0,
+        300
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            2,
+            4
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": []
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CheckpointLoaderSimple"
+      },
+      "widgets_values": [
+        "sam3.1_multiplex_fp16.safetensors"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "LayersSAM3Auto",
+      "title": "1 \u2022 Discover regions automatically",
+      "pos": [
+        400,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        },
+        {
+          "name": "sam_model",
+          "type": "MODEL",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayersSAM3Auto"
+      },
+      "widgets_values": [
+        8,
+        0.002,
+        0.95,
+        0.8,
+        64
+      ]
+    },
+    {
+      "id": 4,
+      "type": "LayersEditor",
+      "title": "2 \u2022 Edit masks and layer order",
+      "pos": [
+        800,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "link": 3
+        },
+        {
+          "name": "sam_model",
+          "type": "MODEL",
+          "link": 4
+        }
+      ],
+      "outputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "links": [
+            5,
+            7
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayersEditor"
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 5,
+      "type": "LayersComposite",
+      "title": "Render composition",
+      "pos": [
+        1200,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "composite_rgba",
+          "type": "IMAGE",
+          "links": [
+            6
+          ]
+        },
+        {
+          "name": "layers_rgba",
+          "type": "IMAGE",
+          "links": []
+        },
+        {
+          "name": "layer_alpha",
+          "type": "MASK",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayersComposite"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 6,
+      "type": "PreviewImage",
+      "title": "Composite preview",
+      "pos": [
+        1600,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 6
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 7,
+      "type": "LayersSave",
+      "title": "Save editable project + PNG layers",
+      "pos": [
+        1200,
+        300
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "project_directory",
+          "type": "STRING",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayersSave"
+      },
+      "widgets_values": [
+        "layers"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "MarkdownNote",
+      "title": "How to use",
+      "pos": [
+        800,
+        350
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "MarkdownNote"
+      },
+      "widgets_values": [
+        "Choose an image, Run automatic discovery once. Open the editor, adjust masks/order, then Apply & Run. This example exports cutouts only: no background reconstruction."
+      ]
+    },
+    {
+      "id": 9,
+      "type": "MarkdownNote",
+      "title": "Automatic discovery - read first",
+      "pos": [
+        0,
+        650
+      ],
+      "size": [
+        720,
+        500
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "MarkdownNote"
+      },
+      "widgets_values": [
+        "# Automatic region discovery\n\nNo object names or additional models are needed. SAM3 is prompted at a grid of points and near-duplicate masks are filtered. An 8 x 8 grid runs up to 64 separate segmentation passes; increasing density is slower.\n\nRegions have generic names. Rename them in the editor and review overlaps and depth order before reconstruction. This heuristic can miss small objects, split an object into parts, or include background regions. It does not guarantee every object or a complete non-overlapping decomposition.\n\nmin_area / max_area are fractions of image area. duplicate_iou filters similar masks. max_layers caps the number retained. Increase points_per_side to search more densely.\n\nThe node displays a source thumbnail after running. Open layer editor to select the regions you want to manipulate. Use the floating Edit mask button on a selected object. Zoom up to 3200%; Ctrl/Cmd-wheel zooms around the pointer, and middle-button drag pans."
+      ]
+    },
+    {
+      "id": 10,
+      "type": "MarkdownNote",
+      "title": "Requirements - ComfyUI and node packs",
+      "pos": [
+        -2300,
+        0
+      ],
+      "size": [
+        720,
+        1000
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "MarkdownNote"
+      },
+      "widgets_values": [
+        "# Requirements: ComfyUI and custom nodes\n\n## ComfyUI\n\nUse a ComfyUI build with native **SAM3_Detect** and **SAM3.1 checkpoint** support. Verify that your original SAM3 workflow runs first. If SAM3_Detect is missing, update ComfyUI; a separate SAM3 custom node pack is not required by this workflow.\n\nhttps://github.com/Comfy-Org/ComfyUI\n\nUpdate instructions:\n\nhttps://docs.comfy.org/installation/update_comfyui\n\n## Required: ComfyUI-SAMLayers\n\nProvides all nodes whose names begin with **Layers**. Copy or clone this repository into `ComfyUI/custom_nodes/ComfyUI-SAMLayers/`.\n\nhttps://github.com/defnotkevin/ComfyUI-SAMLayers\n\nThis pack uses ComfyUI's existing PyTorch, NumPy and Pillow. No additional Python packages are required by SAMLayers.\n\nThe new Layers compositor is included in SAMLayers. ComfyUI-enricos-nodes is not required for this example.\n\n## After installing\n\nRestart the ComfyUI server and refresh the browser. Model files go on the **RunPod server**, not just on the computer running your browser. No model downloads happen automatically.\n"
+      ],
+      "color": "#243447",
+      "bgcolor": "#172330"
+    },
+    {
+      "id": 11,
+      "type": "MarkdownNote",
+      "title": "Requirements - Models and full download URLs",
+      "pos": [
+        -1540,
+        0
+      ],
+      "size": [
+        720,
+        850
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "MarkdownNote"
+      },
+      "widgets_values": [
+        "# Requirements: model files\n\n## SAM3.1 \u2014 required\n\nFile: `sam3.1_multiplex_fp16.safetensors`\n\nPlace it in `ComfyUI/models/checkpoints/` and select it in the **SAM3.1 checkpoint** loader. That loader supplies SAM3's MODEL and CLIP outputs; no separate text-encoder or VAE file is required for segmentation.\n\nModel page:\n\nhttps://huggingface.co/Comfy-Org/sam3.1\n\nDirect checkpoint download:\n\nhttps://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors\n\n## No reconstruction model needed\n\nThis workflow extracts and edits transparent cutouts only. It does not fill the background or reconstruct hidden object parts. No SD/SDXL inpainting model or Qwen Image Layered model is required.\n"
+      ],
+      "color": "#243447",
+      "bgcolor": "#172330"
+    },
+    {
+      "id": 12,
+      "type": "MarkdownNote",
+      "title": "Installation - ComfyUI directory layout",
+      "pos": [
+        -780,
+        0
+      ],
+      "size": [
+        720,
+        1100
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "MarkdownNote"
+      },
+      "widgets_values": [
+        "# File placement on the ComfyUI server\n\nUse your actual ComfyUI installation directory as the root below. RunPod template paths vary; do not assume a fixed `/workspace` path.\n\n```text\nComfyUI/\n|-- models/\n|   `-- checkpoints/\n|       `-- sam3.1_multiplex_fp16.safetensors\n|-- custom_nodes/\n|   `-- ComfyUI-SAMLayers/\n|       |-- __init__.py\n|       |-- nodes.py\n|       |-- web/\n|       `-- examples/\n|-- input/\n|   `-- your_source_image.png\n`-- output/\n    `-- layers_<unique_id>/        (created when saving)\n        |-- composite.png\n        |-- layer_00.png\n        |-- rgb_00.png\n        |-- source.png\n        `-- project.json\n```\n\nUpload the source image using **LoadImage**, or place it in `input/` and select it. Example workflows live in the pack's `examples/` directory; open or drag the JSON file into ComfyUI.\n\nKeep `__init__.py` directly inside the custom node pack directory, not inside an extra nested folder from extracting a ZIP. Keep the entire pack together, including its `web/` directory.\n\nThe `output/` directory is generated output, not a model installation location. The save node writes additional per-layer files; reconstruction projects also include `background.png`.\n"
+      ],
+      "color": "#243447",
+      "bgcolor": "#172330"
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      1,
+      "MODEL"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      0,
+      "LAYERS_PROJECT"
+    ],
+    [
+      4,
+      2,
+      0,
+      4,
+      1,
+      "MODEL"
+    ],
+    [
+      5,
+      4,
+      0,
+      5,
+      0,
+      "LAYERS_PROJECT"
+    ],
+    [
+      6,
+      5,
+      0,
+      6,
+      0,
+      "IMAGE"
+    ],
+    [
+      7,
+      4,
+      0,
+      7,
+      0,
+      "LAYERS_PROJECT"
+    ]
+  ],
+  "groups": [
+    {
+      "title": "START HERE - Requirements and installation",
+      "bounding": [
+        -2330,
+        -80,
+        2290,
+        1220
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}
