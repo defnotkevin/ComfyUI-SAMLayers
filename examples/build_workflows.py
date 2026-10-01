@@ -43,6 +43,10 @@ This pack is required to execute the V4 branch included here; it is not needed b
 The new Layers compositor is included in SAMLayers. ComfyUI-enricos-nodes is not required for this example.
 """
     software += """
+## Alpha matting and edge cleanup
+
+**Layers - Alpha Matte & Edge Cleanup** is included in SAMLayers. It uses CPU/PyTorch local color estimation; no extra model, package or download is needed. Start with edge_radius 3, matte_strength 1.0 and cleanup_strength 0.75. Set both strengths to zero to bypass. It refines a narrow boundary band, not large incorrectly selected background regions.
+
 ## After installing
 
 Restart the ComfyUI server and refresh the browser. Model files go on the **RunPod server**, not just on the computer running your browser. No model downloads happen automatically.
@@ -136,7 +140,7 @@ The `output/` directory is generated output, not a model installation location. 
 Set **CompositorConfig4** width and height to the source image dimensions. The background uses image1; RGBA objects use image2 and image3. Leave mask inputs disconnected because transparency is already embedded in RGBA. Add Get Layer nodes for more objects (eight V4 slots total, including the background).
 """
     return [
-        ('Requirements - ComfyUI and node packs', software, [720, 1000]),
+        ('Requirements - ComfyUI and node packs', software, [720, 1150]),
         ('Requirements - Models and full download URLs', models, [720, 1450 if reconstruct else 850]),
         ('Installation - ComfyUI directory layout', directories, [720, 1100]),
     ]
@@ -179,7 +183,7 @@ class Workflow:
             "min_area / max_area are fractions of image area. duplicate_iou filters similar masks. "
             "max_layers caps the number retained. Increase points_per_side to search more densely.\n\n"
             "The node displays a source thumbnail after running. Open layer editor to select the regions you want to manipulate. "
-            "Use the floating Edit mask button on a selected object. Zoom up to 3200%; Ctrl/Cmd-wheel zooms around the pointer, "
+            "Use the floating Edit mask button on a selected object. Zoom up to 3200%; mouse wheel zooms around the pointer, Shift-wheel scrolls, "
             "and middle-button drag pans."])
         note['size']=[720,500]
         workflow.save(name)
@@ -216,7 +220,17 @@ def base():
     w.link(image,0,detect,0);w.link(sam,0,detect,1);w.link(sam,1,detect,2);w.link(detect,0,edit,0);w.link(sam,0,edit,1)
     return w,sam,edit
 
-def finish(w,project,x):
+def matte(w,project,x,y=0):
+    node=w.node('LayersMatte','Alpha matting and edge-color cleanup',[x,y],
+                [('project','LAYERS_PROJECT')],[('project','LAYERS_PROJECT'),('refined_alpha','MASK')],
+                [3,1.,.75,-1])
+    w.link(project,0,node,0)
+    return node
+
+def finish(w,project,x,refine=True):
+    if refine:
+        project=matte(w,project,x)
+        x+=400
     render=w.node('LayersComposite','Render composition',[x,0],[('project','LAYERS_PROJECT')],[('composite_rgba','IMAGE'),('layers_rgba','IMAGE'),('layer_alpha','MASK')])
     preview=w.node('PreviewImage','Composite preview',[x+400,0],[('images','IMAGE')],[])
     save=w.node('LayersSave','Save editable project + PNG layers',[x,300],[('project','LAYERS_PROJECT')],[('project_directory','STRING')],['layers'])
@@ -233,8 +247,9 @@ rebuild=w.node('LayersReconstruct','3 • Reconstruct background and hidden part
 w.link(edit,0,rebuild,0)
 for i in range(3):w.link(model,i,rebuild,i+1)
 w.link(sam,0,rebuild,4);w.link(sam,1,rebuild,5)
-arrange=w.node('LayersEditor','4 • Arrange reconstructed layers',[1600,0],[('project','LAYERS_PROJECT'),('sam_model','MODEL')],[('project','LAYERS_PROJECT')],[''])
-w.link(rebuild,0,arrange,0);w.link(sam,0,arrange,1);finish(w,arrange,2000)
+refined=matte(w,rebuild,1550,-350)
+arrange=w.node('LayersEditor','4 • Arrange reconstructed layers',[1950,0],[('project','LAYERS_PROJECT'),('sam_model','MODEL')],[('project','LAYERS_PROJECT')],[''])
+w.link(refined,0,arrange,0);w.link(sam,0,arrange,1);finish(w,arrange,2350,refine=False)
 w.node('Note','Two editing stages',[1200,450],[],[],['Set the inpainting checkpoint and background prompt before running. First editor: masks, completion regions, depth order. Second editor: arrange cached reconstructed layers. Change masks in the FIRST editor to regenerate hidden content. Then open the second editor again. Each editor pauses on new source data.'])
 w.save('sam3_layers_reconstruct.json')
 w.save_automatic('sam3_layers_auto_reconstruct.json')

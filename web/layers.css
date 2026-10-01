@@ -8,3 +8,13 @@
 .layers-node-panel{display:flex;flex-direction:column;overflow:auto;height:100%;gap:6px;}
 .layers-node-thumbnail{display:block;width:100%;height:170px;object-fit:contain;background:#0b1220;border-radius:6px;}
 .layers-node-thumbnail[hidden]{display:none;}
+
+/* Keep zoomed canvases from being constrained by host application styles. */
+.layers-scroll{min-width:0;overscroll-behavior:contain;touch-action:none;}
+.layers-stage{flex:none;min-width:max-content;}
+.layers-scroll canvas{max-width:none!important;max-height:none!important;flex:none;}
+.layers-mask-main>.layers-toolbar,.layers-mask-main>.layers-help{flex-shrink:0;}
+.layers-point-overlay{position:absolute;inset:0;pointer-events:none;}
+.layers-point{position:absolute;width:12px;height:12px;box-sizing:border-box;border:2px solid white;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 2px #000;}
+.layers-point-positive{background:#00bb77;}
+.layers-point-negative{background:#ff4466;}

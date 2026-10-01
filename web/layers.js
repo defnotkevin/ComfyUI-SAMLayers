@@ -154,8 +154,8 @@ class Editor {
     ungroup(){this.snapshot();const ids=new Set(this.state.layers.filter(l=>this.selected.has(l.id)).map(l=>l.group).filter(Boolean));for(const l of this.state.layers)if(ids.has(l.group))Object.assign(l,ungroup(l,this.state.groups[l.group],this.state.width,this.state.height));this.cleanGroups();this.list();this.draw();}
     cleanGroups(){for(const id of Object.keys(this.state.groups))if(!this.state.layers.some(l=>l.group===id))delete this.state.groups[id];}
     editSelected(){const layer=this.state.layers.find(l=>this.selected.has(l.id));if(layer)this.maskPopup(layer);else this.status.textContent='Select a layer first.';}
-    async commit(refine=null){
-        const state=clone(this.state);if(refine)state.refine=refine;
+    async commit(refine=null,region=null){
+        const state=clone(this.state);if(refine)state.refine=refine;if(region)state.refine_region=region;
         const widget=this.node.widgets.find(w=>w.name==='editor_state');widget.value=JSON.stringify(state);
         this.node.graph?.setDirtyCanvas(true,true);this.node._layersPayload={...this.payload,state};
         this.close();try{await app.queuePrompt(0,1);}catch(error){console.error(error);app.extensionManager?.toast?.add({severity:'error',summary:'Layers',detail:error.message});}
@@ -171,7 +171,8 @@ class Editor {
         const sizeLabel=el('label','Brush ',toolbar),size=el('input',null,sizeLabel);size.type='range';size.min=1;size.max=200;size.value=30;
         const softLabel=el('label','Softness ',toolbar),soft=el('input',null,softLabel);soft.type='range';soft.min=0;soft.max=1;soft.step=.05;soft.value=.2;
         const help=el('p','Draw adds pixels. Erase removes them. Point refinement runs SAM3 when requested; apply brush corrections afterwards.',main,'layers-help');
-        const scroll=el('div',null,main,'layers-scroll'),view=canvas(this.state.width,this.state.height);scroll.append(view);
+        const scroll=el('div',null,main,'layers-scroll'),stage=el('div',null,scroll,'layers-stage'),view=canvas(this.state.width,this.state.height);stage.append(view);
+        const markers=el('div',null,stage,'layers-point-overlay');
         const zoomControl=addZoomControls(toolbar,scroll,view);
         const planes={mask:canvas(view.width,view.height),completion:canvas(view.width,view.height)};
         for(const key of Object.keys(planes)){const ctx=planes[key].getContext('2d');ctx.fillStyle='black';ctx.fillRect(0,0,view.width,view.height);if(layer[key])ctx.drawImage(await load(layer[key]),0,0);}
@@ -183,7 +184,11 @@ class Editor {
             const ctx=view.getContext('2d');ctx.clearRect(0,0,view.width,view.height);ctx.drawImage(this.original,0,0);
             const overlay=canvas(view.width,view.height),o=overlay.getContext('2d');o.drawImage(planes[mode.value],0,0);
             const pixels=o.getImageData(0,0,view.width,view.height);for(let p=0;p<pixels.data.length;p+=4){const a=pixels.data[p];pixels.data[p]=mode.value==='mask'?40:255;pixels.data[p+1]=mode.value==='mask'?180:140;pixels.data[p+2]=mode.value==='mask'?255:30;pixels.data[p+3]=a*.5;}o.putImageData(pixels,0,0);ctx.drawImage(overlay,0,0);
-            for(const key of ['positive','negative'])for(const p of points[key]){ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);ctx.fillStyle=key==='positive'?'#00ff88':'#ff4466';ctx.fill();ctx.strokeStyle='white';ctx.stroke();}
+            markers.replaceChildren();
+            for(const key of ['positive','negative'])for(const p of points[key]){
+                const marker=el('span',null,markers,`layers-point layers-point-${key}`);
+                marker.style.left=`${p.x/view.width*100}%`;marker.style.top=`${p.y/view.height*100}%`;
+            }
         };
         const stamp=(x,y)=>{const ctx=planes[mode.value].getContext('2d'),r=Number(size.value)/2,color=tool.value==='erase'?'0,0,0':'255,255,255',s=Number(soft.value);ctx.fillStyle=`rgb(${color})`;if(s>0){const g=ctx.createRadialGradient(x,y,r*(1-s),x,y,r);g.addColorStop(0,`rgba(${color},1)`);g.addColorStop(1,`rgba(${color},0)`);ctx.fillStyle=g;}ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();};
         view.onpointerdown=e=>{
@@ -201,6 +206,26 @@ class Editor {
             const raw=planes.completion.getContext('2d').getImageData(0,0,view.width,view.height).data;let nonzero=false;for(let i=0;i<raw.length;i+=4)if(raw[i]){nonzero=true;break;}
             if(nonzero)layer.completion=planes.completion.toDataURL();else delete layer.completion;};
         button(head,'Apply',async()=>{apply();close();await this.refresh();});
+        button(toolbar,'Shrink mask 1 px',()=>{
+            remember();const ctx=planes[mode.value].getContext('2d'),image=ctx.getImageData(0,0,view.width,view.height),src=image.data.slice();
+            for(let y=0;y<view.height;y++)for(let x=0;x<view.width;x++){
+                let value=255;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+                    const xx=Math.max(0,Math.min(view.width-1,x+dx)),yy=Math.max(0,Math.min(view.height-1,y+dy));value=Math.min(value,src[(yy*view.width+xx)*4]);
+                }const i=(y*view.width+x)*4;image.data[i]=image.data[i+1]=image.data[i+2]=value;
+            }ctx.putImageData(image,0,0);draw();
+        });
+        button(toolbar,'Soften edge 0.7 px',()=>{
+            remember();const target=planes[mode.value],copy=canvas(view.width,view.height);copy.getContext('2d').drawImage(target,0,0);
+            const ctx=target.getContext('2d');ctx.fillStyle='black';ctx.fillRect(0,0,view.width,view.height);ctx.filter='blur(0.7px)';ctx.drawImage(copy,0,0);ctx.filter='none';draw();
+        });
+        button(head,'Refine visible area',async()=>{
+            const r=view.getBoundingClientRect(),s=scroll.getBoundingClientRect();
+            const region={x:Math.max(0,Math.floor((s.left-r.left)*view.width/r.width)),y:Math.max(0,Math.floor((s.top-r.top)*view.height/r.height)),
+                right:Math.min(view.width,Math.ceil((s.right-r.left)*view.width/r.width)),bottom:Math.min(view.height,Math.ceil((s.bottom-r.top)*view.height/r.height))};
+            if(!points.positive.some(p=>p.x>=region.x&&p.x<region.right&&p.y>=region.y&&p.y<region.bottom)){
+                help.textContent='Add a positive click on the object inside this view and negative clicks in the unwanted gaps. Then refine the visible area.';return;
+            }apply();close();await this.commit(layer.id,region);
+        });
         button(head,'Refine clicks with SAM3',async()=>{if(!points.positive.length){help.textContent='Add at least one positive point inside the object.';return;}apply();close();await this.commit(layer.id);});
         popup.showModal();zoomControl.fit();draw();
     }

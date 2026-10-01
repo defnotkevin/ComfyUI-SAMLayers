@@ -43,16 +43,89 @@ in the workflow but is hidden from the node. Click **Open layer editor**, then
 **Apply & Run** to continue to render/save; blank downstream previews before applying
 are expected.
 
-Both canvases support **10–3200% zoom**, an exact percentage field, plus/minus,
-100%, and Fit controls. **Ctrl/Cmd + wheel** zooms around the pointer;
-**middle-button drag** pans without moving a layer or painting. Normal scrolling
-also pans. Brushes still operate in source-image pixels, so a 1-pixel brush is
+Both canvases support **10–3200% zoom**, a slider, an exact percentage field, plus/minus,
+100%, and Fit controls. **Mouse wheel** zooms around the pointer (Ctrl/Cmd also works); **Shift + wheel** scrolls;
+**middle-button drag** pans without moving a layer or painting. The scrollbars also pan. Brushes still operate in source-image pixels, so a 1-pixel brush is
 usable at high zoom.
 
 Select one visible object to show a floating **Edit mask** button over its bounding
 area. The button follows movement, transforms, scrolling and zoom. The right-hand
 Mask buttons and viewport double-click remain available. The former top-toolbar
 Edit mask button has been removed.
+
+## Clean up fine edges and finger gaps
+
+SAM3's masks can include background between fingers and have binary, jagged edges.
+Zooming enlarges the existing pixels; it does not recover detail missing from the source.
+
+1. Open the object's mask popup and zoom onto the hand or another troublesome area.
+2. Place positive clicks on the object **inside the visible crop**, and negative clicks in unwanted background gaps.
+3. Click **Refine visible area**. This queues SAM3 on just that crop, using the original source pixels and local point coordinates. Only the cropped mask is changed; its border blends back into the previous mask. Reopen the editor to review.
+4. Erase any remaining background using a small brush. Use **Shrink mask 1 px** sparingly for a thin background fringe; it affects the entire active mask and can remove thin details.
+5. Use **Soften edge 0.7 px** for modest antialiasing after fixing the shape. This affects the entire active mask. Both cleanup actions support Undo and Cancel.
+
+Point markers are a fixed 12 CSS pixels and do not grow with image zoom. Brush size
+remains measured in source pixels. Point refinement uses one prompted pass so a
+subsequent unprompted decoder pass does not change the click-guided result.
+
+Feathering cannot remove large incorrectly selected gaps, restore hair detail, or
+remove background colors mixed into edge pixels. The Alpha Matte & Edge Cleanup node below handles a narrow boundary band, but
+ambiguous hair, glass and large segmentation errors still need a stronger matting
+model or manual correction.
+
+### Empty prompt versus automatic detection
+
+`sam3_layers_edit.json` still uses **SAM3 Named Objects**. Leaving its objects field
+blank is an error. Load `sam3_layers_auto_edit.json` for automatic discovery, or
+replace Named Objects with **Layers • SAM3 Automatic Regions**, connect image and
+SAM model, and connect its project output to the editor. The automatic node has
+no object-name input. It uses the same checkpoint and needs no extra models.
+
+## Alpha matting and edge-color cleanup
+
+**Layers • Alpha Matte & Edge Cleanup** refines transparency and reduces background
+color contamination at cutout boundaries. No extra checkpoint or Python package is
+required. It runs on CPU using PyTorch, one layer at a time.
+
+The regenerated examples include it automatically:
+
+- Editing workflows: **mask editor → matting → render/save**. Inspect the final output preview to see the refined edges; the upstream editor still shows your original editable mask.
+- Reconstruction/V4 workflows: **reconstruction → matting → arrangement editor → render/save or V4 bridge**. The arrangement editor receives the refined alpha and cleaned RGB.
+
+For an existing workflow, insert the node on the `LAYERS_PROJECT` connection before
+rendering, saving, or the final arrangement editor. Keep it after mask editing; changes
+made upstream recompute from the upstream image rather than repeatedly cleaning the
+last result. To inspect masks, connect `refined_alpha` to a standard mask preview.
+
+| Control | Starting value | Effect |
+|---|---|---|
+| edge_radius | 3 | Width of the uncertain boundary in source pixels (1–16). Start at 1–2 for fine fingers or hair. |
+| matte_strength | 1.0 | Blend between the original mask and estimated partial transparency. Zero keeps the original alpha. |
+| cleanup_strength | 0.75 | Strength of foreground color recovery on partially transparent edges. Zero keeps original RGB. |
+| layer_index | -1 | Process every layer. Otherwise choose a zero-based layer index. |
+
+Set both strengths to zero for an exact bypass. Transforms, groups, layer names,
+source pixels, and the reconstructed background are preserved. The output project
+contains separate refined masks and RGB layers; existing save/load and RGBA exports
+include them. No UI controls or per-mask popup settings are required for this node.
+
+The algorithm builds a trimap from the mask: known foreground, known background,
+and an uncertain boundary. Local foreground/background colors are propagated into
+that band. It estimates alpha using the compositing equation, then estimates clean
+foreground RGB and writes **straight (not premultiplied) alpha**. Opaque interiors
+are protected. Low-contrast or unsupported regions retain their existing alpha.
+Layers with no usable foreground/background seeds are left unchanged.
+
+This is a lightweight local-color estimator, not closed-form or neural matting.
+Textured backgrounds, similarly colored foreground/background, disconnected thin
+parts and transparent materials can confuse it. It does not generate missing detail
+or guarantee recovery of hair. Reduce radius/strength if an edge changes incorrectly.
+Correct finger gaps using localized SAM refinement or erasing first; a gap outside
+the narrow uncertain band is deliberately left alone. Quality on your RunPod images
+still needs visual validation.
+
+Background on the compositing model (reference only; PyMatting is not a dependency):
+https://pymatting.github.io/
 
 ## Start with the editing workflow
 
@@ -125,6 +198,7 @@ The workflow stores edited masks and transforms in its editor-state widget. Sour
 | Import Masks | Adapter for the supplied SAM3 workflow or any IMAGE + MASK batch |
 | Compositor & Mask Editor | Layer arrangement, groups, brush edits and queued SAM3 clicks |
 | Reconstruct | Clean background and approximate hidden-object completion |
+| Alpha Matte & Edge Cleanup | Local alpha estimation and foreground edge-color recovery |
 | Render | Composite, transformed RGBA layer batch, alpha batch |
 | Get Layer (V4 Bridge) | Select a zero-based layer as RGBA / alpha |
 | Save Project / Load Project | Portable PNG + JSON project persistence |

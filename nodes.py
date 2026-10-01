@@ -65,7 +65,7 @@ def detect(model, image, clip=None, prompt='', positive=None, negative=None, thr
     result = SAM3_Detect.execute(model=model, image=image, conditioning=conditioning,
         positive_coords=json.dumps(positive) if positive else None,
         negative_coords=json.dumps(negative) if negative else None,
-        threshold=threshold, refine_iterations=2, individual_masks=True)
+        threshold=threshold, refine_iterations=1 if positive or negative else 2, individual_masks=True)
     masks = outputs(result)[0].detach().cpu().float()
     if masks.ndim != 3 or tuple(masks.shape[-2:]) != tuple(image.shape[1:3]):
         raise ValueError('Unexpected SAM3 mask shape')
@@ -136,7 +136,7 @@ class LayersSAM3:
             raise ValueError('Select one source image.')
         prompts = [p.strip() for p in objects.splitlines() if p.strip()]
         if not prompts or len(prompts) > MAX_LAYERS:
-            raise ValueError('Enter one object description per line (maximum 64).')
+            raise ValueError('Named detection needs one object description per line (maximum 64). For detection without names, open sam3_layers_auto_edit.json or use Layers • SAM3 Automatic Regions.')
         masks, names = [], []
         for prompt in prompts:
             found = detect(sam_model, image, sam_clip, prompt, threshold=threshold)
@@ -269,20 +269,43 @@ class LayersEditor:
         if (state.get('width'), state.get('height')) != (project['state']['width'], project['state']['height']):
             raise ValueError('Editor dimensions changed; reset editor.')
         request = state.pop('refine', None)
+        region = state.pop('refine_region', None)
         if request:
             if sam_model is None:
                 raise ValueError('Connect sam_model to use positive/negative click refinement.')
             layer = next(x for x in state['layers'] if x['id'] == request)
             index = next(i for i, x in enumerate(project['state']['layers']) if x['id'] == request)
             refine_image = project['rgbs'][index:index+1] if project.get('rgbs') is not None else project['image']
-            candidates = detect(sam_model, refine_image, positive=layer.get('positive'), negative=layer.get('negative'))
             old = read_mask(layer['mask'], (state['width'], state['height']))
+            x, y, right, bottom = 0, 0, state['width'], state['height']
+            if region is not None:
+                x, y, right, bottom = (int(region[k]) for k in ('x', 'y', 'right', 'bottom'))
+                if not (0 <= x < right <= state['width'] and 0 <= y < bottom <= state['height']):
+                    raise ValueError('Invalid refinement crop. Zoom onto the image and retry.')
+            def local_points(points):
+                return [{'x': p['x']-x, 'y': p['y']-y} for p in points or []
+                        if x <= p['x'] < right and y <= p['y'] < bottom]
+            positive, negative = local_points(layer.get('positive')), local_points(layer.get('negative'))
+            if region is not None and not positive:
+                raise ValueError('Place a positive point on the object inside the visible refinement area.')
+            candidates = detect(sam_model, refine_image[:, y:bottom, x:right], positive=positive, negative=negative)
+            old_crop = old[y:bottom, x:right]
             if len(candidates) == 0 or not candidates.max().item():
                 raise ValueError('SAM3 refinement found no object. Add a positive point inside it.')
             # Prefer the candidate overlapping this layer, not an unrelated detection.
-            intersection = (candidates * old).sum(dim=(1, 2))
-            union = (candidates + old - candidates * old).sum(dim=(1, 2)).clamp_min(1)
-            layer['mask'] = data_url(pil(candidates[(intersection/union).argmax()], 'L'))
+            intersection = (candidates * old_crop).sum(dim=(1, 2))
+            union = (candidates + old_crop - candidates * old_crop).sum(dim=(1, 2)).clamp_min(1)
+            chosen = candidates[(intersection/union).argmax()]
+            refined = old.clone()
+            if region is not None:
+                # Blend only at crop borders to avoid introducing a rectangular seam.
+                ch, cw = chosen.shape
+                yy, xx = torch.arange(ch), torch.arange(cw)
+                weight = torch.minimum(torch.minimum(yy, ch-1-yy)[:,None],
+                                       torch.minimum(xx, cw-1-xx)[None,:]).float().div(4).clamp(0,1)
+                chosen = chosen*weight + old_crop*(1-weight)
+            refined[y:bottom, x:right] = chosen
+            layer['mask'] = data_url(pil(refined, 'L'))
             return {'ui': ui_payload(project, state, review_required=True), 'result': (ExecutionBlocker(None),)}
         return {'ui': ui_payload(project, state), 'result': (edited_project(project, state),)}
 
@@ -399,6 +422,44 @@ def render(project):
     return tensor(canvas).unsqueeze(0), torch.stack(rendered)
 
 
+class LayersMatte:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {'required': {'project': ('LAYERS_PROJECT',),
+            'edge_radius': ('INT', {'default': 3, 'min': 1, 'max': 16,
+                'tooltip': 'Unknown boundary width in source pixels. Keep small for fingers/hair.'}),
+            'matte_strength': ('FLOAT', {'default': 1., 'min': 0., 'max': 1., 'step': .05}),
+            'cleanup_strength': ('FLOAT', {'default': .75, 'min': 0., 'max': 1., 'step': .05}),
+            'layer_index': ('INT', {'default': -1, 'min': -1, 'max': MAX_LAYERS-1,
+                'tooltip': '-1 refines all layers; otherwise use a zero-based layer index.'})}}
+    RETURN_TYPES = ('LAYERS_PROJECT', 'MASK')
+    RETURN_NAMES = ('project', 'refined_alpha')
+    FUNCTION = 'run'
+    CATEGORY = CATEGORY
+
+    def run(self, project, edge_radius, matte_strength, cleanup_strength, layer_index):
+        from .matting import refine_layer
+        if layer_index < -1 or layer_index >= len(project['masks']):
+            raise ValueError('Matting layer index is outside this project.')
+        if matte_strength == 0 and cleanup_strength == 0:
+            return project, project['masks']
+        state = json.loads(json.dumps(project['state']))
+        masks = project['masks'].clone()
+        rgbs = project.get('rgbs', project['image'].repeat(len(masks),1,1,1)).clone()
+        for i, layer in enumerate(state['layers']):
+            if layer_index != -1 and i != layer_index:
+                continue
+            # Cooperate with ComfyUI's cancel button between layers.
+            import comfy.model_management
+            comfy.model_management.throw_exception_if_processing_interrupted()
+            rgbs[i], masks[i] = refine_layer(rgbs[i], masks[i], edge_radius, matte_strength, cleanup_strength)
+            layer['mask'] = data_url(pil(masks[i], 'L'))
+        result = dict(project, state=state, masks=masks, rgbs=rgbs)
+        result['source'] = hashlib.sha256((project['source']+hash_project(rgbs,masks,[])).encode()).hexdigest()
+        state['source'] = result['source']
+        return result, masks
+
+
 class LayersComposite:
     @classmethod
     def INPUT_TYPES(cls):
@@ -504,10 +565,11 @@ class LayersLoad:
 
 
 NODE_CLASS_MAPPINGS = {cls.__name__: cls for cls in [LayersSAM3, LayersSAM3Auto, LayersFromMasks, LayersEditor,
-    LayersReconstruct, LayersComposite, LayersGetLayer, LayersSave, LayersLoad]}
+    LayersReconstruct, LayersMatte, LayersComposite, LayersGetLayer, LayersSave, LayersLoad]}
 NODE_DISPLAY_NAME_MAPPINGS = {
     'LayersSAM3Auto': 'Layers • SAM3 Automatic Regions',
     'LayersSAM3': 'Layers • SAM3 Named Objects', 'LayersFromMasks': 'Layers • Import Masks',
     'LayersEditor': 'Layers • Compositor & Mask Editor', 'LayersReconstruct': 'Layers • Reconstruct',
+    'LayersMatte': 'Layers • Alpha Matte & Edge Cleanup',
     'LayersComposite': 'Layers • Render', 'LayersGetLayer': 'Layers • Get Layer (V4 Bridge)',
     'LayersSave': 'Layers • Save Project', 'LayersLoad': 'Layers • Load Project'}

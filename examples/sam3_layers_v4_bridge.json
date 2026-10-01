@@ -1,6 +1,6 @@
 {
-  "last_node_id": 19,
-  "last_link_id": 22,
+  "last_node_id": 20,
+  "last_link_id": 23,
   "nodes": [
     {
       "id": 1,
@@ -64,7 +64,7 @@
             2,
             5,
             10,
-            13
+            14
           ]
         },
         {
@@ -285,7 +285,7 @@
           "name": "background",
           "type": "IMAGE",
           "links": [
-            17
+            18
           ]
         }
       ],
@@ -305,11 +305,11 @@
     },
     {
       "id": 7,
-      "type": "LayersEditor",
-      "title": "4 \u2022 Arrange reconstructed layers",
+      "type": "LayersMatte",
+      "title": "Alpha matting and edge-color cleanup",
       "pos": [
-        1600,
-        0
+        1550,
+        -350
       ],
       "size": [
         340,
@@ -323,11 +323,6 @@
           "name": "project",
           "type": "LAYERS_PROJECT",
           "link": 12
-        },
-        {
-          "name": "sam_model",
-          "type": "MODEL",
-          "link": 13
         }
       ],
       "outputs": [
@@ -335,26 +330,31 @@
           "name": "project",
           "type": "LAYERS_PROJECT",
           "links": [
-            14,
-            16,
-            18,
-            20
+            13
           ]
+        },
+        {
+          "name": "refined_alpha",
+          "type": "MASK",
+          "links": []
         }
       ],
       "properties": {
-        "Node name for S&R": "LayersEditor"
+        "Node name for S&R": "LayersMatte"
       },
       "widgets_values": [
-        ""
+        3,
+        1.0,
+        0.75,
+        -1
       ]
     },
     {
       "id": 8,
-      "type": "LayersComposite",
-      "title": "Render composition",
+      "type": "LayersEditor",
+      "title": "4 \u2022 Arrange reconstructed layers",
       "pos": [
-        2000,
+        1950,
         0
       ],
       "size": [
@@ -368,7 +368,53 @@
         {
           "name": "project",
           "type": "LAYERS_PROJECT",
+          "link": 13
+        },
+        {
+          "name": "sam_model",
+          "type": "MODEL",
           "link": 14
+        }
+      ],
+      "outputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "links": [
+            15,
+            17,
+            19,
+            21
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayersEditor"
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 9,
+      "type": "LayersComposite",
+      "title": "Render composition",
+      "pos": [
+        2350,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "link": 15
         }
       ],
       "outputs": [
@@ -376,7 +422,7 @@
           "name": "composite_rgba",
           "type": "IMAGE",
           "links": [
-            15
+            16
           ]
         },
         {
@@ -396,40 +442,12 @@
       "widgets_values": []
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "PreviewImage",
       "title": "Composite preview",
       "pos": [
-        2400,
+        2750,
         0
-      ],
-      "size": [
-        340,
-        240
-      ],
-      "flags": {},
-      "order": 8,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 15
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 10,
-      "type": "LayersSave",
-      "title": "Save editable project + PNG layers",
-      "pos": [
-        2000,
-        300
       ],
       "size": [
         340,
@@ -440,9 +458,37 @@
       "mode": 0,
       "inputs": [
         {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 16
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 11,
+      "type": "LayersSave",
+      "title": "Save editable project + PNG layers",
+      "pos": [
+        2350,
+        300
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
           "name": "project",
           "type": "LAYERS_PROJECT",
-          "link": 16
+          "link": 17
         }
       ],
       "outputs": [
@@ -460,7 +506,7 @@
       ]
     },
     {
-      "id": 11,
+      "id": 12,
       "type": "MarkdownNote",
       "title": "Two editing stages",
       "pos": [
@@ -472,7 +518,7 @@
         240
       ],
       "flags": {},
-      "order": 10,
+      "order": 11,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -484,7 +530,7 @@
       ]
     },
     {
-      "id": 12,
+      "id": 13,
       "type": "CompositorConfig4",
       "title": "Optional \u2022 Existing Compositor V4 bridge",
       "pos": [
@@ -496,13 +542,13 @@
         240
       ],
       "flags": {},
-      "order": 11,
+      "order": 12,
       "mode": 0,
       "inputs": [
         {
           "name": "image1",
           "type": "IMAGE",
-          "link": 17
+          "link": 18
         },
         {
           "name": "mask1",
@@ -512,7 +558,7 @@
         {
           "name": "image2",
           "type": "IMAGE",
-          "link": 19
+          "link": 20
         },
         {
           "name": "mask2",
@@ -522,7 +568,7 @@
         {
           "name": "image3",
           "type": "IMAGE",
-          "link": 21
+          "link": 22
         },
         {
           "name": "mask3",
@@ -585,7 +631,7 @@
           "name": "config",
           "type": "COMPOSITOR_CONFIG",
           "links": [
-            22
+            23
           ]
         }
       ],
@@ -604,7 +650,7 @@
       ]
     },
     {
-      "id": 13,
+      "id": 14,
       "type": "LayersGetLayer",
       "title": "Object 1 \u2192 V4",
       "pos": [
@@ -616,13 +662,13 @@
         240
       ],
       "flags": {},
-      "order": 12,
+      "order": 13,
       "mode": 0,
       "inputs": [
         {
           "name": "project",
           "type": "LAYERS_PROJECT",
-          "link": 18
+          "link": 19
         }
       ],
       "outputs": [
@@ -630,7 +676,7 @@
           "name": "rgba",
           "type": "IMAGE",
           "links": [
-            19
+            20
           ]
         },
         {
@@ -653,7 +699,7 @@
       ]
     },
     {
-      "id": 14,
+      "id": 15,
       "type": "LayersGetLayer",
       "title": "Object 2 \u2192 V4",
       "pos": [
@@ -665,13 +711,13 @@
         240
       ],
       "flags": {},
-      "order": 13,
+      "order": 14,
       "mode": 0,
       "inputs": [
         {
           "name": "project",
           "type": "LAYERS_PROJECT",
-          "link": 20
+          "link": 21
         }
       ],
       "outputs": [
@@ -679,7 +725,7 @@
           "name": "rgba",
           "type": "IMAGE",
           "links": [
-            21
+            22
           ]
         },
         {
@@ -702,7 +748,7 @@
       ]
     },
     {
-      "id": 15,
+      "id": 16,
       "type": "Compositor4",
       "title": "Existing Compositor V4",
       "pos": [
@@ -714,13 +760,13 @@
         240
       ],
       "flags": {},
-      "order": 14,
+      "order": 15,
       "mode": 0,
       "inputs": [
         {
           "name": "config",
           "type": "COMPOSITOR_CONFIG",
-          "link": 22
+          "link": 23
         }
       ],
       "outputs": [
@@ -751,7 +797,7 @@
       ]
     },
     {
-      "id": 16,
+      "id": 17,
       "type": "MarkdownNote",
       "title": "V4 bridge settings",
       "pos": [
@@ -763,7 +809,7 @@
         240
       ],
       "flags": {},
-      "order": 15,
+      "order": 16,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -775,7 +821,7 @@
       ]
     },
     {
-      "id": 17,
+      "id": 18,
       "type": "MarkdownNote",
       "title": "Requirements - ComfyUI and node packs",
       "pos": [
@@ -784,10 +830,10 @@
       ],
       "size": [
         720,
-        1000
+        1150
       ],
       "flags": {},
-      "order": 16,
+      "order": 17,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -795,13 +841,13 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# Requirements: ComfyUI and custom nodes\n\n## ComfyUI\n\nUse a ComfyUI build with native **SAM3_Detect** and **SAM3.1 checkpoint** support. Verify that your original SAM3 workflow runs first. If SAM3_Detect is missing, update ComfyUI; a separate SAM3 custom node pack is not required by this workflow.\n\nhttps://github.com/Comfy-Org/ComfyUI\n\nUpdate instructions:\n\nhttps://docs.comfy.org/installation/update_comfyui\n\n## Required: ComfyUI-SAMLayers\n\nProvides all nodes whose names begin with **Layers**. Copy or clone this repository into `ComfyUI/custom_nodes/ComfyUI-SAMLayers/`.\n\nhttps://github.com/defnotkevin/ComfyUI-SAMLayers\n\nThis pack uses ComfyUI's existing PyTorch, NumPy and Pillow. No additional Python packages are required by SAMLayers.\n\n## Required for this bridge: ComfyUI-enricos-nodes\n\nProvides **CompositorConfig4** and **Compositor4**. Install the pack in `ComfyUI/custom_nodes/ComfyUI-enricos-nodes/` and follow its own dependency instructions.\n\nhttps://github.com/erosDiffusion/ComfyUI-enricos-nodes\n\nThis pack is required to execute the V4 branch included here; it is not needed by the editing-only or reconstruction-only examples.\n\n## After installing\n\nRestart the ComfyUI server and refresh the browser. Model files go on the **RunPod server**, not just on the computer running your browser. No model downloads happen automatically.\n"
+        "# Requirements: ComfyUI and custom nodes\n\n## ComfyUI\n\nUse a ComfyUI build with native **SAM3_Detect** and **SAM3.1 checkpoint** support. Verify that your original SAM3 workflow runs first. If SAM3_Detect is missing, update ComfyUI; a separate SAM3 custom node pack is not required by this workflow.\n\nhttps://github.com/Comfy-Org/ComfyUI\n\nUpdate instructions:\n\nhttps://docs.comfy.org/installation/update_comfyui\n\n## Required: ComfyUI-SAMLayers\n\nProvides all nodes whose names begin with **Layers**. Copy or clone this repository into `ComfyUI/custom_nodes/ComfyUI-SAMLayers/`.\n\nhttps://github.com/defnotkevin/ComfyUI-SAMLayers\n\nThis pack uses ComfyUI's existing PyTorch, NumPy and Pillow. No additional Python packages are required by SAMLayers.\n\n## Required for this bridge: ComfyUI-enricos-nodes\n\nProvides **CompositorConfig4** and **Compositor4**. Install the pack in `ComfyUI/custom_nodes/ComfyUI-enricos-nodes/` and follow its own dependency instructions.\n\nhttps://github.com/erosDiffusion/ComfyUI-enricos-nodes\n\nThis pack is required to execute the V4 branch included here; it is not needed by the editing-only or reconstruction-only examples.\n\n## Alpha matting and edge cleanup\n\n**Layers - Alpha Matte & Edge Cleanup** is included in SAMLayers. It uses CPU/PyTorch local color estimation; no extra model, package or download is needed. Start with edge_radius 3, matte_strength 1.0 and cleanup_strength 0.75. Set both strengths to zero to bypass. It refines a narrow boundary band, not large incorrectly selected background regions.\n\n## After installing\n\nRestart the ComfyUI server and refresh the browser. Model files go on the **RunPod server**, not just on the computer running your browser. No model downloads happen automatically.\n"
       ],
       "color": "#243447",
       "bgcolor": "#172330"
     },
     {
-      "id": 18,
+      "id": 19,
       "type": "MarkdownNote",
       "title": "Requirements - Models and full download URLs",
       "pos": [
@@ -813,7 +859,7 @@
         1450
       ],
       "flags": {},
-      "order": 17,
+      "order": 18,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -827,7 +873,7 @@
       "bgcolor": "#172330"
     },
     {
-      "id": 19,
+      "id": 20,
       "type": "MarkdownNote",
       "title": "Installation - ComfyUI directory layout",
       "pos": [
@@ -839,7 +885,7 @@
         1100
       ],
       "flags": {},
-      "order": 18,
+      "order": 19,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -952,19 +998,19 @@
     ],
     [
       13,
-      2,
-      0,
-      7,
-      1,
-      "MODEL"
-    ],
-    [
-      14,
       7,
       0,
       8,
       0,
       "LAYERS_PROJECT"
+    ],
+    [
+      14,
+      2,
+      0,
+      8,
+      1,
+      "MODEL"
     ],
     [
       15,
@@ -972,61 +1018,69 @@
       0,
       9,
       0,
-      "IMAGE"
+      "LAYERS_PROJECT"
     ],
     [
       16,
-      7,
+      9,
       0,
       10,
-      0,
-      "LAYERS_PROJECT"
-    ],
-    [
-      17,
-      6,
-      1,
-      12,
       0,
       "IMAGE"
     ],
     [
-      18,
-      7,
+      17,
+      8,
       0,
-      13,
+      11,
       0,
       "LAYERS_PROJECT"
     ],
     [
-      19,
+      18,
+      6,
+      1,
       13,
       0,
-      12,
+      "IMAGE"
+    ],
+    [
+      19,
+      8,
+      0,
+      14,
+      0,
+      "LAYERS_PROJECT"
+    ],
+    [
+      20,
+      14,
+      0,
+      13,
       2,
       "IMAGE"
     ],
     [
-      20,
-      7,
+      21,
+      8,
       0,
-      14,
+      15,
       0,
       "LAYERS_PROJECT"
     ],
     [
-      21,
-      14,
+      22,
+      15,
       0,
-      12,
+      13,
       4,
       "IMAGE"
     ],
     [
-      22,
-      12,
+      23,
+      13,
       0,
-      15,
+      16,
       0,
       "COMPOSITOR_CONFIG"
     ]

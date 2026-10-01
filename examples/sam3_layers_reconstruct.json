@@ -1,6 +1,6 @@
 {
-  "last_node_id": 14,
-  "last_link_id": 16,
+  "last_node_id": 15,
+  "last_link_id": 17,
   "nodes": [
     {
       "id": 1,
@@ -64,7 +64,7 @@
             2,
             5,
             10,
-            13
+            14
           ]
         },
         {
@@ -303,11 +303,11 @@
     },
     {
       "id": 7,
-      "type": "LayersEditor",
-      "title": "4 \u2022 Arrange reconstructed layers",
+      "type": "LayersMatte",
+      "title": "Alpha matting and edge-color cleanup",
       "pos": [
-        1600,
-        0
+        1550,
+        -350
       ],
       "size": [
         340,
@@ -321,11 +321,6 @@
           "name": "project",
           "type": "LAYERS_PROJECT",
           "link": 12
-        },
-        {
-          "name": "sam_model",
-          "type": "MODEL",
-          "link": 13
         }
       ],
       "outputs": [
@@ -333,24 +328,31 @@
           "name": "project",
           "type": "LAYERS_PROJECT",
           "links": [
-            14,
-            16
+            13
           ]
+        },
+        {
+          "name": "refined_alpha",
+          "type": "MASK",
+          "links": []
         }
       ],
       "properties": {
-        "Node name for S&R": "LayersEditor"
+        "Node name for S&R": "LayersMatte"
       },
       "widgets_values": [
-        ""
+        3,
+        1.0,
+        0.75,
+        -1
       ]
     },
     {
       "id": 8,
-      "type": "LayersComposite",
-      "title": "Render composition",
+      "type": "LayersEditor",
+      "title": "4 \u2022 Arrange reconstructed layers",
       "pos": [
-        2000,
+        1950,
         0
       ],
       "size": [
@@ -364,7 +366,51 @@
         {
           "name": "project",
           "type": "LAYERS_PROJECT",
+          "link": 13
+        },
+        {
+          "name": "sam_model",
+          "type": "MODEL",
           "link": 14
+        }
+      ],
+      "outputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "links": [
+            15,
+            17
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayersEditor"
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 9,
+      "type": "LayersComposite",
+      "title": "Render composition",
+      "pos": [
+        2350,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "link": 15
         }
       ],
       "outputs": [
@@ -372,7 +418,7 @@
           "name": "composite_rgba",
           "type": "IMAGE",
           "links": [
-            15
+            16
           ]
         },
         {
@@ -392,40 +438,12 @@
       "widgets_values": []
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "PreviewImage",
       "title": "Composite preview",
       "pos": [
-        2400,
+        2750,
         0
-      ],
-      "size": [
-        340,
-        240
-      ],
-      "flags": {},
-      "order": 8,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 15
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 10,
-      "type": "LayersSave",
-      "title": "Save editable project + PNG layers",
-      "pos": [
-        2000,
-        300
       ],
       "size": [
         340,
@@ -436,9 +454,37 @@
       "mode": 0,
       "inputs": [
         {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 16
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 11,
+      "type": "LayersSave",
+      "title": "Save editable project + PNG layers",
+      "pos": [
+        2350,
+        300
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
           "name": "project",
           "type": "LAYERS_PROJECT",
-          "link": 16
+          "link": 17
         }
       ],
       "outputs": [
@@ -456,7 +502,7 @@
       ]
     },
     {
-      "id": 11,
+      "id": 12,
       "type": "MarkdownNote",
       "title": "Two editing stages",
       "pos": [
@@ -468,7 +514,7 @@
         240
       ],
       "flags": {},
-      "order": 10,
+      "order": 11,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -480,7 +526,7 @@
       ]
     },
     {
-      "id": 12,
+      "id": 13,
       "type": "MarkdownNote",
       "title": "Requirements - ComfyUI and node packs",
       "pos": [
@@ -489,10 +535,10 @@
       ],
       "size": [
         720,
-        1000
+        1150
       ],
       "flags": {},
-      "order": 11,
+      "order": 12,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -500,13 +546,13 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# Requirements: ComfyUI and custom nodes\n\n## ComfyUI\n\nUse a ComfyUI build with native **SAM3_Detect** and **SAM3.1 checkpoint** support. Verify that your original SAM3 workflow runs first. If SAM3_Detect is missing, update ComfyUI; a separate SAM3 custom node pack is not required by this workflow.\n\nhttps://github.com/Comfy-Org/ComfyUI\n\nUpdate instructions:\n\nhttps://docs.comfy.org/installation/update_comfyui\n\n## Required: ComfyUI-SAMLayers\n\nProvides all nodes whose names begin with **Layers**. Copy or clone this repository into `ComfyUI/custom_nodes/ComfyUI-SAMLayers/`.\n\nhttps://github.com/defnotkevin/ComfyUI-SAMLayers\n\nThis pack uses ComfyUI's existing PyTorch, NumPy and Pillow. No additional Python packages are required by SAMLayers.\n\nThe new Layers compositor is included in SAMLayers. ComfyUI-enricos-nodes is not required for this example.\n\n## After installing\n\nRestart the ComfyUI server and refresh the browser. Model files go on the **RunPod server**, not just on the computer running your browser. No model downloads happen automatically.\n"
+        "# Requirements: ComfyUI and custom nodes\n\n## ComfyUI\n\nUse a ComfyUI build with native **SAM3_Detect** and **SAM3.1 checkpoint** support. Verify that your original SAM3 workflow runs first. If SAM3_Detect is missing, update ComfyUI; a separate SAM3 custom node pack is not required by this workflow.\n\nhttps://github.com/Comfy-Org/ComfyUI\n\nUpdate instructions:\n\nhttps://docs.comfy.org/installation/update_comfyui\n\n## Required: ComfyUI-SAMLayers\n\nProvides all nodes whose names begin with **Layers**. Copy or clone this repository into `ComfyUI/custom_nodes/ComfyUI-SAMLayers/`.\n\nhttps://github.com/defnotkevin/ComfyUI-SAMLayers\n\nThis pack uses ComfyUI's existing PyTorch, NumPy and Pillow. No additional Python packages are required by SAMLayers.\n\nThe new Layers compositor is included in SAMLayers. ComfyUI-enricos-nodes is not required for this example.\n\n## Alpha matting and edge cleanup\n\n**Layers - Alpha Matte & Edge Cleanup** is included in SAMLayers. It uses CPU/PyTorch local color estimation; no extra model, package or download is needed. Start with edge_radius 3, matte_strength 1.0 and cleanup_strength 0.75. Set both strengths to zero to bypass. It refines a narrow boundary band, not large incorrectly selected background regions.\n\n## After installing\n\nRestart the ComfyUI server and refresh the browser. Model files go on the **RunPod server**, not just on the computer running your browser. No model downloads happen automatically.\n"
       ],
       "color": "#243447",
       "bgcolor": "#172330"
     },
     {
-      "id": 13,
+      "id": 14,
       "type": "MarkdownNote",
       "title": "Requirements - Models and full download URLs",
       "pos": [
@@ -518,7 +564,7 @@
         1450
       ],
       "flags": {},
-      "order": 12,
+      "order": 13,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -532,7 +578,7 @@
       "bgcolor": "#172330"
     },
     {
-      "id": 14,
+      "id": 15,
       "type": "MarkdownNote",
       "title": "Installation - ComfyUI directory layout",
       "pos": [
@@ -544,7 +590,7 @@
         1100
       ],
       "flags": {},
-      "order": 13,
+      "order": 14,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -657,14 +703,6 @@
     ],
     [
       13,
-      2,
-      0,
-      7,
-      1,
-      "MODEL"
-    ],
-    [
-      14,
       7,
       0,
       8,
@@ -672,18 +710,34 @@
       "LAYERS_PROJECT"
     ],
     [
+      14,
+      2,
+      0,
+      8,
+      1,
+      "MODEL"
+    ],
+    [
       15,
       8,
       0,
       9,
       0,
-      "IMAGE"
+      "LAYERS_PROJECT"
     ],
     [
       16,
-      7,
+      9,
       0,
       10,
+      0,
+      "IMAGE"
+    ],
+    [
+      17,
+      8,
+      0,
+      11,
       0,
       "LAYERS_PROJECT"
     ]

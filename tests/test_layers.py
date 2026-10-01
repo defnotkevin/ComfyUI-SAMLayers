@@ -162,6 +162,27 @@ class LayersTests(unittest.TestCase):
         self.assertEqual(result['state']['layers'][0]['discovery'],'automatic')
         self.assertEqual(result['state']['layers'][0]['name'],'Region 1')
 
+    def test_local_refinement_preserves_mask_outside_crop(self):
+        class Blocker:
+            def __init__(self, value): pass
+        p=self.project(); state=json.loads(json.dumps(p['state']))
+        state['refine']='layer-0'
+        state['refine_region']={'x':1,'y':1,'right':14,'bottom':15}
+        state['layers'][0]['positive']=[{'x':6,'y':6},{'x':20,'y':8}]
+        state['layers'][0]['negative']=[{'x':8,'y':9}]
+        candidate=torch.ones(1,14,13)
+        with patch.dict(sys.modules, {'comfy_execution.graph':types.SimpleNamespace(ExecutionBlocker=Blocker)}),patch.object(nodes,'detect',return_value=candidate) as detector:
+            out=nodes.LayersEditor().run(p,json.dumps(state),object())
+        kwargs=detector.call_args.kwargs
+        self.assertEqual(kwargs['positive'],[{'x':5,'y':5}])
+        self.assertEqual(kwargs['negative'],[{'x':7,'y':8}])
+        self.assertEqual(tuple(detector.call_args.args[1].shape),(1,14,13,3))
+        result=out['ui']['layers_project'][0]['state']
+        mask=nodes.read_mask(result['layers'][0]['mask'],(24,16))
+        self.assertTrue(torch.equal(mask[:,14:],p['masks'][0,:,14:]))
+        self.assertEqual(float(mask[9,9]),1)
+        self.assertNotIn('refine_region',result)
+
     def test_native_inpaint_padding_and_unchanged_pixels(self):
         image=torch.ones(1,13,19,3)*.2;mask=torch.zeros(1,13,19);mask[:,3:6,4:8]=1
         seen={}

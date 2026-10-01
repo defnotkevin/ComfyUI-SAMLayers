@@ -1,6 +1,6 @@
 {
-  "last_node_id": 12,
-  "last_link_id": 7,
+  "last_node_id": 13,
+  "last_link_id": 8,
   "nodes": [
     {
       "id": 1,
@@ -162,8 +162,7 @@
           "name": "project",
           "type": "LAYERS_PROJECT",
           "links": [
-            5,
-            7
+            5
           ]
         }
       ],
@@ -176,8 +175,8 @@
     },
     {
       "id": 5,
-      "type": "LayersComposite",
-      "title": "Render composition",
+      "type": "LayersMatte",
+      "title": "Alpha matting and edge-color cleanup",
       "pos": [
         1200,
         0
@@ -198,10 +197,57 @@
       ],
       "outputs": [
         {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "links": [
+            6,
+            8
+          ]
+        },
+        {
+          "name": "refined_alpha",
+          "type": "MASK",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayersMatte"
+      },
+      "widgets_values": [
+        3,
+        1.0,
+        0.75,
+        -1
+      ]
+    },
+    {
+      "id": 6,
+      "type": "LayersComposite",
+      "title": "Render composition",
+      "pos": [
+        1600,
+        0
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "project",
+          "type": "LAYERS_PROJECT",
+          "link": 6
+        }
+      ],
+      "outputs": [
+        {
           "name": "composite_rgba",
           "type": "IMAGE",
           "links": [
-            6
+            7
           ]
         },
         {
@@ -221,40 +267,12 @@
       "widgets_values": []
     },
     {
-      "id": 6,
+      "id": 7,
       "type": "PreviewImage",
       "title": "Composite preview",
       "pos": [
-        1600,
+        2000,
         0
-      ],
-      "size": [
-        340,
-        240
-      ],
-      "flags": {},
-      "order": 5,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 6
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 7,
-      "type": "LayersSave",
-      "title": "Save editable project + PNG layers",
-      "pos": [
-        1200,
-        300
       ],
       "size": [
         340,
@@ -265,9 +283,37 @@
       "mode": 0,
       "inputs": [
         {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 7
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 8,
+      "type": "LayersSave",
+      "title": "Save editable project + PNG layers",
+      "pos": [
+        1600,
+        300
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
           "name": "project",
           "type": "LAYERS_PROJECT",
-          "link": 7
+          "link": 8
         }
       ],
       "outputs": [
@@ -285,7 +331,7 @@
       ]
     },
     {
-      "id": 8,
+      "id": 9,
       "type": "MarkdownNote",
       "title": "How to use",
       "pos": [
@@ -297,7 +343,7 @@
         240
       ],
       "flags": {},
-      "order": 7,
+      "order": 8,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -309,7 +355,7 @@
       ]
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "MarkdownNote",
       "title": "Automatic discovery - read first",
       "pos": [
@@ -321,30 +367,6 @@
         500
       ],
       "flags": {},
-      "order": 8,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "MarkdownNote"
-      },
-      "widgets_values": [
-        "# Automatic region discovery\n\nNo object names or additional models are needed. SAM3 is prompted at a grid of points and near-duplicate masks are filtered. An 8 x 8 grid runs up to 64 separate segmentation passes; increasing density is slower.\n\nRegions have generic names. Rename them in the editor and review overlaps and depth order before reconstruction. This heuristic can miss small objects, split an object into parts, or include background regions. It does not guarantee every object or a complete non-overlapping decomposition.\n\nmin_area / max_area are fractions of image area. duplicate_iou filters similar masks. max_layers caps the number retained. Increase points_per_side to search more densely.\n\nThe node displays a source thumbnail after running. Open layer editor to select the regions you want to manipulate. Use the floating Edit mask button on a selected object. Zoom up to 3200%; Ctrl/Cmd-wheel zooms around the pointer, and middle-button drag pans."
-      ]
-    },
-    {
-      "id": 10,
-      "type": "MarkdownNote",
-      "title": "Requirements - ComfyUI and node packs",
-      "pos": [
-        -2300,
-        0
-      ],
-      "size": [
-        720,
-        1000
-      ],
-      "flags": {},
       "order": 9,
       "mode": 0,
       "inputs": [],
@@ -353,13 +375,37 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# Requirements: ComfyUI and custom nodes\n\n## ComfyUI\n\nUse a ComfyUI build with native **SAM3_Detect** and **SAM3.1 checkpoint** support. Verify that your original SAM3 workflow runs first. If SAM3_Detect is missing, update ComfyUI; a separate SAM3 custom node pack is not required by this workflow.\n\nhttps://github.com/Comfy-Org/ComfyUI\n\nUpdate instructions:\n\nhttps://docs.comfy.org/installation/update_comfyui\n\n## Required: ComfyUI-SAMLayers\n\nProvides all nodes whose names begin with **Layers**. Copy or clone this repository into `ComfyUI/custom_nodes/ComfyUI-SAMLayers/`.\n\nhttps://github.com/defnotkevin/ComfyUI-SAMLayers\n\nThis pack uses ComfyUI's existing PyTorch, NumPy and Pillow. No additional Python packages are required by SAMLayers.\n\nThe new Layers compositor is included in SAMLayers. ComfyUI-enricos-nodes is not required for this example.\n\n## After installing\n\nRestart the ComfyUI server and refresh the browser. Model files go on the **RunPod server**, not just on the computer running your browser. No model downloads happen automatically.\n"
+        "# Automatic region discovery\n\nNo object names or additional models are needed. SAM3 is prompted at a grid of points and near-duplicate masks are filtered. An 8 x 8 grid runs up to 64 separate segmentation passes; increasing density is slower.\n\nRegions have generic names. Rename them in the editor and review overlaps and depth order before reconstruction. This heuristic can miss small objects, split an object into parts, or include background regions. It does not guarantee every object or a complete non-overlapping decomposition.\n\nmin_area / max_area are fractions of image area. duplicate_iou filters similar masks. max_layers caps the number retained. Increase points_per_side to search more densely.\n\nThe node displays a source thumbnail after running. Open layer editor to select the regions you want to manipulate. Use the floating Edit mask button on a selected object. Zoom up to 3200%; mouse wheel zooms around the pointer, Shift-wheel scrolls, and middle-button drag pans."
+      ]
+    },
+    {
+      "id": 11,
+      "type": "MarkdownNote",
+      "title": "Requirements - ComfyUI and node packs",
+      "pos": [
+        -2300,
+        0
+      ],
+      "size": [
+        720,
+        1150
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "MarkdownNote"
+      },
+      "widgets_values": [
+        "# Requirements: ComfyUI and custom nodes\n\n## ComfyUI\n\nUse a ComfyUI build with native **SAM3_Detect** and **SAM3.1 checkpoint** support. Verify that your original SAM3 workflow runs first. If SAM3_Detect is missing, update ComfyUI; a separate SAM3 custom node pack is not required by this workflow.\n\nhttps://github.com/Comfy-Org/ComfyUI\n\nUpdate instructions:\n\nhttps://docs.comfy.org/installation/update_comfyui\n\n## Required: ComfyUI-SAMLayers\n\nProvides all nodes whose names begin with **Layers**. Copy or clone this repository into `ComfyUI/custom_nodes/ComfyUI-SAMLayers/`.\n\nhttps://github.com/defnotkevin/ComfyUI-SAMLayers\n\nThis pack uses ComfyUI's existing PyTorch, NumPy and Pillow. No additional Python packages are required by SAMLayers.\n\nThe new Layers compositor is included in SAMLayers. ComfyUI-enricos-nodes is not required for this example.\n\n## Alpha matting and edge cleanup\n\n**Layers - Alpha Matte & Edge Cleanup** is included in SAMLayers. It uses CPU/PyTorch local color estimation; no extra model, package or download is needed. Start with edge_radius 3, matte_strength 1.0 and cleanup_strength 0.75. Set both strengths to zero to bypass. It refines a narrow boundary band, not large incorrectly selected background regions.\n\n## After installing\n\nRestart the ComfyUI server and refresh the browser. Model files go on the **RunPod server**, not just on the computer running your browser. No model downloads happen automatically.\n"
       ],
       "color": "#243447",
       "bgcolor": "#172330"
     },
     {
-      "id": 11,
+      "id": 12,
       "type": "MarkdownNote",
       "title": "Requirements - Models and full download URLs",
       "pos": [
@@ -371,7 +417,7 @@
         850
       ],
       "flags": {},
-      "order": 10,
+      "order": 11,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -385,7 +431,7 @@
       "bgcolor": "#172330"
     },
     {
-      "id": 12,
+      "id": 13,
       "type": "MarkdownNote",
       "title": "Installation - ComfyUI directory layout",
       "pos": [
@@ -397,7 +443,7 @@
         1100
       ],
       "flags": {},
-      "order": 11,
+      "order": 12,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -458,13 +504,21 @@
       0,
       6,
       0,
-      "IMAGE"
+      "LAYERS_PROJECT"
     ],
     [
       7,
-      4,
+      6,
       0,
       7,
+      0,
+      "IMAGE"
+    ],
+    [
+      8,
+      5,
+      0,
+      8,
       0,
       "LAYERS_PROJECT"
     ]
@@ -476,7 +530,7 @@
         -2330,
         -80,
         2290,
-        1220
+        1270
       ],
       "color": "#3f789e",
       "font_size": 24,
