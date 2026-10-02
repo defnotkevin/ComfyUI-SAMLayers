@@ -13,6 +13,7 @@ from PIL import Image, ImageFilter
 
 from .project import (VERSION, MAX_LAYERS, parse_state, layer_matrix,
                       inverse_pillow, visible)
+from .reconstruction import background_removal_mask
 
 CATEGORY = 'Layers'
 
@@ -464,20 +465,25 @@ class LayersReconstruct:
             'expand_pixels': ('INT', {'default': 32, 'min': 0, 'max': 256}),
             'seed': ('INT', {'default': 0, 'min': 0, 'max': 0xffffffffffffffff}),
             'steps': ('INT', {'default': 25, 'min': 1, 'max': 100}),
-            'cfg': ('FLOAT', {'default': 6, 'min': 0, 'max': 30})}}
+            'cfg': ('FLOAT', {'default': 6, 'min': 0, 'max': 30})},
+            'optional': {
+                'removal_margin': ('INT', {'default': 12, 'min': 0, 'max': 128,
+                    'tooltip': 'Extra background pixels to regenerate around cutouts; reduces residual outlines.'}),
+                'removal_feather': ('INT', {'default': 4, 'min': 0, 'max': 32,
+                    'tooltip': 'Soft transition outside the fully removed area. Original cutout masks stay unchanged.'})}}
     RETURN_TYPES = ('LAYERS_PROJECT', 'IMAGE')
     RETURN_NAMES = ('project', 'background')
     FUNCTION = 'run'
     CATEGORY = CATEGORY
 
     def run(self, project, model, clip, vae, sam_model, sam_clip, background_prompt, negative_prompt,
-            complete_hidden, expand_pixels, seed, steps, cfg):
+            complete_hidden, expand_pixels, seed, steps, cfg, removal_margin=12, removal_feather=4):
         import comfy.model_management
         image, masks = project['image'], project['masks'].clone()
         state = json.loads(json.dumps(project['state']))
         h, w = image.shape[1:3]
         union = masks.amax(dim=0)
-        removal = tensor(pil(union, 'L').filter(ImageFilter.MaxFilter(7))).unsqueeze(0)
+        removal = tensor(background_removal_mask(pil(union, 'L'), removal_margin, removal_feather)).unsqueeze(0)
         # Native model management loads/evicts models as each stage needs them.
         background = inpaint(image, removal, model, clip, vae, background_prompt, negative_prompt, seed, steps, cfg)
         rgbs = image.repeat(len(masks), 1, 1, 1)
