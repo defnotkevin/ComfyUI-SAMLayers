@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 import torch
 import test_layers as support
-from test_layers_package.discovery import parse_objects, discovery_prompt, run_vision
+from test_layers_package.discovery import parse_objects, normalize_discovery, discovery_prompt, run_vision
 nodes=support.nodes
 
 
@@ -17,6 +17,65 @@ def objects():
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_model_aliases_do_not_relax_review_validation(self):
+        raw=json.dumps({'detections':[{'label':'person','bbox_2d':[100,100,600,950]},
+            {'object_name':'floor','bounding_box':{'left':0,'top':800,'right':1000,'bottom':1000}}]})
+        result=normalize_discovery('Here is the JSON:\n'+raw)
+        self.assertEqual(result,parse_objects(json.dumps(objects())))
+        with self.assertRaises(ValueError):parse_objects(raw)
+        self.assertEqual(normalize_discovery(json.dumps(objects())),result)
+
+    def test_model_missing_names_and_bad_boxes_are_not_invented(self):
+        for raw in ['```', '{"objects":[{"category":42,"bbox":[0,0,100,100]}]}',
+                    '{"label":"person","bbox_2d":[0,0,2000,100]}',
+                    '{"label":"person"}', '{"objects":[]}']:
+            with self.subTest(raw=raw),self.assertRaises(ValueError):normalize_discovery(raw)
+
+    def test_vision_repairs_once_and_saves_failed_responses(self):
+        for succeeds in (True,False):
+            events=[]
+            raw_bad='{"objects":[{"bbox":[0,0,100,100]}]}'
+            responses=iter([raw_bad,json.dumps(objects()) if succeeds else raw_bad])
+            mm=types.SimpleNamespace(unload_all_models=lambda:None,
+                soft_empty_cache=lambda:events.append('clear'),get_torch_device=lambda:'cpu',
+                throw_exception_if_processing_interrupted=lambda:None)
+            fake=types.ModuleType('comfy');fake.model_management=mm
+            class Inputs(dict):
+                def to(self,device):return self
+            class Processor:
+                @classmethod
+                def from_pretrained(cls,*args,**kwargs):return cls()
+                def apply_chat_template(self,messages,**kwargs):
+                    events.append(('messages',len(messages)))
+                    return 'prompt'
+                def __call__(self,**kwargs):return Inputs(input_ids=torch.zeros(1,3,dtype=torch.long))
+                def batch_decode(self,*args,**kwargs):return [next(responses)]
+            class Model:
+                @classmethod
+                def from_pretrained(cls,*args,**kwargs):
+                    events.append('load');return cls()
+                def to(self,device):return self
+                def eval(self):return self
+                def generate(self,**kwargs):return torch.zeros(1,4,dtype=torch.long)
+            with tempfile.TemporaryDirectory() as directory:
+                (Path(directory)/'config.json').write_text('{}')
+                modules={'comfy':fake,'comfy.model_management':mm,
+                    'transformers':types.SimpleNamespace(AutoProcessor=Processor,Qwen2_5_VLForConditionalGeneration=Model),
+                    'folder_paths':types.SimpleNamespace(get_temp_directory=lambda:directory)}
+                with patch.dict(sys.modules,modules),patch('torch.cuda.is_available',return_value=True):
+                    if succeeds:
+                        self.assertEqual(run_vision(None,directory,'whole objects',24),parse_objects(json.dumps(objects())))
+                    else:
+                        with self.assertRaisesRegex(ValueError,'Raw responses saved to'):
+                            run_vision(None,directory,'whole objects',24)
+                        paths=list((Path(directory)/'samlayers_discovery').glob('failed_*.json'))
+                        self.assertEqual(len(paths),1)
+                        saved=json.loads(paths[0].read_text())['attempts']
+                        self.assertEqual([x['response'] for x in saved],[raw_bad,raw_bad])
+                self.assertEqual(events.count('load'),1)
+                self.assertIn(('messages',3),events)
+                self.assertEqual(events[-1],'clear')
+
     def test_normalization_background_and_invalid_boxes(self):
         result=parse_objects('```json\n'+json.dumps({'objects':objects()})+'\n```')
         self.assertTrue(result[0]['enabled']);self.assertFalse(result[1]['enabled'])

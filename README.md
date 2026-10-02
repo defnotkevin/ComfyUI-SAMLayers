@@ -95,6 +95,16 @@ are supplied as SAM prompts rather than hard mask crops, so they guide instance
 selection without mechanically cutting off the mask. This does not guarantee a
 complete non-overlapping decomposition or solve alpha-matting errors.
 
+If Qwen returns invalid object JSON, discovery accepts common field variants such
+as `label` and `bbox_2d`, then makes one format-repair attempt if needed using the
+already loaded model. It does not invent missing names or boxes. If both attempts
+fail, the error includes the path to
+`ComfyUI/temp/samlayers_discovery/failed_<id>.json` (or your configured temp directory).
+This file contains the raw generated responses and validation errors for diagnosis.
+An error about object data does not require downloading the model again. The
+Transformers `min_pixels`/`max_pixels` deprecation warning is separate from JSON
+validation failures.
+
 ## Point-grid discovery (advanced fallback)
 
 Open `examples/sam3_layers_auto_edit.json` to discover candidate regions, or
