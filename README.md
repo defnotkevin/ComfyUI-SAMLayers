@@ -105,6 +105,17 @@ An error about object data does not require downloading the model again. The
 Transformers `min_pixels`/`max_pixels` deprecation warning is separate from JSON
 validation failures.
 
+Discovery requests absolute pixel boxes from Qwen on an explicitly resized image
+(dimensions divisible by 28, approximately 0.8 megapixels maximum). It disables
+further processor resizing and converts these boxes to the editor's 0–1000 scale.
+It does not guess the coordinate scale from whether numbers exceed 1000.
+Diagnostics include the image dimensions used for generation. Existing saved
+review lists keep their normalized coordinate format. The prompt prioritizes
+visible foreground objects without prescribing a list of background surfaces;
+review the results because correct JSON does not guarantee correct detections.
+Qwen's coordinate convention is described at:
+https://qwenlm.github.io/blog/qwen2.5-vl/
+
 ## Point-grid discovery (advanced fallback)
 
 Open `examples/sam3_layers_auto_edit.json` to discover candidate regions, or

@@ -6,8 +6,9 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 import torch
+from PIL import Image
 import test_layers as support
-from test_layers_package.discovery import parse_objects, normalize_discovery, discovery_prompt, run_vision
+from test_layers_package.discovery import parse_objects, normalize_discovery, prepare_discovery_image, discovery_prompt, run_vision
 nodes=support.nodes
 
 
@@ -17,6 +18,26 @@ def objects():
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_pixel_boxes_use_explicit_dimensions_even_below_1000(self):
+        raw='```json [ {"bbox_2d": [0, 468, 430, 672], "label": "floor"} ] ```'
+        result=normalize_discovery(raw,pixel_size=(1036,672))[0]
+        self.assertEqual(result['bbox'],[0,1000*468/672,1000*430/1036,1000])
+        self.assertFalse(result['enabled'])
+        self.assertEqual(normalize_discovery('{"label":"person","bbox":[0,0,250,400]}',
+                         pixel_size=(500,800))[0]['bbox'],[0,0,500,500])
+        with self.assertRaises(ValueError):
+            normalize_discovery(raw,pixel_size=(500,500))
+
+    def test_discovery_image_has_bounded_aligned_dimensions(self):
+        for size in [(1036,672),(4000,3000),(64,64)]:
+            result=prepare_discovery_image(Image.new('RGB',size))
+            self.assertEqual(result.width%28,0)
+            self.assertEqual(result.height%28,0)
+            self.assertLessEqual(result.width*result.height,1024*28*28)
+        prompt=discovery_prompt('whole objects',24,(1036,672))
+        self.assertIn('absolute pixels',prompt)
+        self.assertNotIn('ceiling and sky',prompt)
+
     def test_model_aliases_do_not_relax_review_validation(self):
         raw=json.dumps({'detections':[{'label':'person','bbox_2d':[100,100,600,950]},
             {'object_name':'floor','bounding_box':{'left':0,'top':800,'right':1000,'bottom':1000}}]})
@@ -35,7 +56,11 @@ class DiscoveryTests(unittest.TestCase):
         for succeeds in (True,False):
             events=[]
             raw_bad='{"objects":[{"bbox":[0,0,100,100]}]}'
-            responses=iter([raw_bad,json.dumps(objects()) if succeeds else raw_bad])
+            test_image=Image.new('RGB',(1036,672))
+            pixel_objects=objects()
+            for obj in pixel_objects:
+                obj['bbox']=[v*d/1000 for v,d in zip(obj['bbox'],test_image.size*2)]
+            responses=iter([raw_bad,json.dumps(pixel_objects) if succeeds else raw_bad])
             mm=types.SimpleNamespace(unload_all_models=lambda:None,
                 soft_empty_cache=lambda:events.append('clear'),get_torch_device=lambda:'cpu',
                 throw_exception_if_processing_interrupted=lambda:None)
@@ -64,10 +89,10 @@ class DiscoveryTests(unittest.TestCase):
                     'folder_paths':types.SimpleNamespace(get_temp_directory=lambda:directory)}
                 with patch.dict(sys.modules,modules),patch('torch.cuda.is_available',return_value=True):
                     if succeeds:
-                        self.assertEqual(run_vision(None,directory,'whole objects',24),parse_objects(json.dumps(objects())))
+                        self.assertEqual(run_vision(Image.new('RGB',(1036,672)),directory,'whole objects',24),parse_objects(json.dumps(objects())))
                     else:
                         with self.assertRaisesRegex(ValueError,'Raw responses saved to'):
-                            run_vision(None,directory,'whole objects',24)
+                            run_vision(Image.new('RGB',(1036,672)),directory,'whole objects',24)
                         paths=list((Path(directory)/'samlayers_discovery').glob('failed_*.json'))
                         self.assertEqual(len(paths),1)
                         saved=json.loads(paths[0].read_text())['attempts']
@@ -142,7 +167,7 @@ class DiscoveryTests(unittest.TestCase):
             (Path(directory)/'config.json').write_text('{}')
             with patch.dict(sys.modules,{'comfy':fake,'comfy.model_management':mm,'transformers':transformers}),patch('torch.cuda.is_available',return_value=True):
                 with self.assertRaisesRegex(RuntimeError,'simulated failure'):
-                    run_vision(None,directory,'whole objects',24)
+                    run_vision(Image.new('RGB',(1036,672)),directory,'whole objects',24)
         self.assertEqual(events,['unload','clear','clear'])
 
 if __name__=='__main__':unittest.main()
