@@ -422,10 +422,28 @@ or multiple selected layers. Hold Shift while dragging to snap the rotation delt
 to 15-degree increments. Numeric Rotation remains available for exact angles;
 rotation supports Undo/Redo and is saved with Apply & Run.
 
-Full-scene discovery does not yet provide independent clean-plate completion for
-every environmental layer. The reconstructed base can still contain environmental
-features when those layers are moved. Use the editing-only workflow for transparent
-cutouts; review generated fills before relying on hidden background content.
+The default `foreground removal` reconstruction mode preserves environmental
+features in a flattened backdrop. Moving cloud cutouts in that mode can reveal a
+stationary copy beneath them. Disabling `complete_hidden` also leaves holes where
+other objects originally occluded a cutout.
+
+For independently movable scene layers, choose `independent scene layers` in
+**Reconstruct background and hidden parts**, and enable `complete_hidden`. Put the
+surface that should fill the scene (for example sky) at the back of the layer list.
+This mode fills all gaps in that surface, including clouds, terrain and subjects,
+and uses it as a full-canvas editable base layer. It does not retain a second
+flattened backdrop. The IMAGE output is a preview of the completed base; do not
+composite that output underneath the editable stack or it will duplicate the base.
+
+Layers above the base use the original occluder masks and source-space boxes to
+estimate hidden regions, inpaint them, and resegment their completed shapes.
+Paint **Hidden area to reconstruct** to correct an estimated completion region.
+Transforms are applied after reconstruction. Moving the completed base itself can
+expose transparency at canvas edges. This mode derives the base prompt from its
+layer name (overriding `background_prompt`) and adds other layer names to the base
+negative prompt. Use a descriptive base name and review the layer order first.
+The new mode has CPU regression coverage; diffusion fill quality and completed
+cloud shapes still need RunPod validation. It cannot guarantee invisible geometry.
 
 Full-scene discovery starts with three focused prompts with one Qwen model load:
 foreground subjects, sky/cloud instances, then ground/structural surfaces using
@@ -439,5 +457,6 @@ guarantee that every visible instance will be found.
 Reviewed-instance segmentation retains multiple SAM3 text candidates until matching
 them to each reviewed bounding box. This prevents an early single-result limit
 from returning the same highest-confidence cloud for separate left/right entries.
-The latest RunPod test of cc91cf5 found four discovery entries but only three masks;
-these candidate-selection and missing-sky corrections still require GPU validation.
+RunPod validation of a98d639 produced five separate masks: sky, left cloud, right
+cloud, grass, and character. The right-cloud and sky masks were visually checked.
+That validated discovery and segmentation, not independent layer completion.

@@ -102,7 +102,7 @@ def new_project(image, masks, names):
 
 def ui_payload(project, state, review_required=False):
     payload = dict(state=state, review_required=review_required, image=data_url(pil(project['image'][0], 'RGB')),
-                   reconstructed=bool(project.get('background') is not None))
+                   reconstructed=bool(project.get('rgbs') is not None or project.get('background') is not None))
     if project.get('background') is not None:
         payload['background'] = data_url(pil(project['background'][0], 'RGB'))
     if project.get('rgbs') is not None:
@@ -475,32 +475,58 @@ class LayersReconstruct:
                 'removal_margin': ('INT', {'default': 12, 'min': 0, 'max': 128,
                     'tooltip': 'Extra background pixels to regenerate around cutouts; reduces residual outlines.'}),
                 'removal_feather': ('INT', {'default': 4, 'min': 0, 'max': 32,
-                    'tooltip': 'Soft transition outside the fully removed area. Original cutout masks stay unchanged.'})}}
+                    'tooltip': 'Soft transition outside the fully removed area. Original cutout masks stay unchanged.'}),
+                'reconstruction_mode': (['foreground removal', 'independent scene layers'],
+                    {'default': 'foreground removal', 'tooltip': 'Completes the backmost background surface as an editable base, then occluded layers. Requires complete_hidden. No flattened duplicate backdrop.'})}}
     RETURN_TYPES = ('LAYERS_PROJECT', 'IMAGE')
     RETURN_NAMES = ('project', 'background')
     FUNCTION = 'run'
     CATEGORY = CATEGORY
 
     def run(self, project, model, clip, vae, sam_model, sam_clip, background_prompt, negative_prompt,
-            complete_hidden, expand_pixels, seed, steps, cfg, removal_margin=12, removal_feather=4):
+            complete_hidden, expand_pixels, seed, steps, cfg, removal_margin=12, removal_feather=4,
+            reconstruction_mode='foreground removal'):
         import comfy.model_management
         image, masks = project['image'], project['masks'].clone()
         state = json.loads(json.dumps(project['state']))
         h, w = image.shape[1:3]
-        # Environmental layers are editable surfaces, not foreground removal targets.
+        if reconstruction_mode not in ('foreground removal', 'independent scene layers'):
+            raise ValueError('Unknown reconstruction mode.')
+        scene = reconstruction_mode == 'independent scene layers'
+        if scene and (not complete_hidden or state['layers'][0].get('kind') != 'background'):
+            raise ValueError('Independent scene layers requires complete_hidden enabled and a background surface (such as sky) as the backmost layer. Review layer order first.')
+        # Keep original occluders immutable while completing layers back to front.
+        source_masks = masks.clone()
+        # Legacy mode removes foreground subjects only.
         removable = [i for i, layer in enumerate(state['layers']) if layer.get('kind') != 'background']
         union = masks[removable].amax(dim=0) if removable else torch.zeros_like(masks[0])
+        if scene:
+            # Fill every gap in the base surface, including all other scene elements.
+            # The completed surface is itself editable, not duplicated below the stack.
+            union = (1-source_masks[0]).clamp(0, 1)
+            base_name = state['layers'][0]['name']
+            background_prompt = f'{base_name}, continuous unobstructed surface filling the entire image, same style and colors as the visible surface, no other objects'
+            excluded = ', '.join(layer['name'] for layer in state['layers'][1:])
+            base_negative = f'{negative_prompt}, {excluded}' if excluded else negative_prompt
+        else:
+            base_negative = negative_prompt
         removal = tensor(background_removal_mask(pil(union, 'L'), removal_margin, removal_feather)).unsqueeze(0)
         # Native model management loads/evicts models as each stage needs them.
-        background = (inpaint(image, removal, model, clip, vae, background_prompt, negative_prompt, seed, steps, cfg)
+        background = (inpaint(image, removal, model, clip, vae, background_prompt, base_negative, seed, steps, cfg)
                       if removal.max().item() > 0 else image.clone())
         rgbs = image.repeat(len(masks), 1, 1, 1)
+        if scene:
+            rgbs[0] = background[0]
+            masks[0] = torch.ones_like(masks[0])
+            state['layers'][0]['mask'] = data_url(pil(masks[0], 'L'))
         # State order is back-to-front. Restrict completion to foreground occluders
         # near the visible object's bounding box; user can override with a painted region.
         if complete_hidden:
             for i, layer in enumerate(state['layers']):
                 comfy.model_management.throw_exception_if_processing_interrupted()
-                original = masks[i].clone()
+                if scene and i == 0:
+                    continue
+                original = source_masks[i].clone()
                 region = layer.get('completion')
                 if region:
                     hole = read_mask(region, (w, h)) * (1-original)
@@ -511,7 +537,7 @@ class LayersReconstruct:
                     x0, y0, x1, y1 = bbox
                     near = torch.zeros_like(original)
                     near[max(0,y0-expand_pixels):min(h,y1+expand_pixels), max(0,x0-expand_pixels):min(w,x1+expand_pixels)] = 1
-                    hole = masks[i+1:].amax(0) * near * (1-original)
+                    hole = source_masks[i+1:].amax(0) * near * (1-original)
                 if hole.max().item() <= 0:
                     continue
                 description = re.sub(r" #\d+$", "", layer["name"])
@@ -536,7 +562,7 @@ class LayersReconstruct:
                 masks[i] = torch.maximum(original, alpha*hole)
                 rgbs[i] = completed[0]
                 layer['mask'] = data_url(pil(masks[i], 'L'))
-        result = dict(project, background=background, masks=masks, rgbs=rgbs, state=state)
+        result = dict(project, background=None if scene else background, masks=masks, rgbs=rgbs, state=state)
         # A new editor source signature invalidates only stale downstream edit sessions.
         result['source'] = hash_project(rgbs, masks, [x['name'] for x in state['layers']]) + hash_project(background, masks, [])
         state['source'] = result['source']

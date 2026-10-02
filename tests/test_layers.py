@@ -215,5 +215,57 @@ class LayersTests(unittest.TestCase):
         self.assertIn('background',result)
         self.assertNotEqual(result['source'],p['source'])
 
+    def test_independent_scene_completes_cloud_and_has_no_duplicate_backdrop(self):
+        image=torch.zeros(1,16,24,3);image[...,2]=1
+        cloud=torch.zeros(16,24);cloud[2:6,4:12]=1
+        person=torch.zeros(16,24);person[4:14,7:10]=1
+        visible_cloud=cloud*(1-person)
+        sky=1-torch.maximum(cloud,person)
+        image[0][cloud.bool()]=1;image[0][person.bool()]=torch.tensor([1.,0.,0.])
+        p=nodes.new_project(image,torch.stack([sky,visible_cloud,person]),['sky','cloud','person'])
+        for layer in p['state']['layers'][:2]:layer['kind']='background'
+        p['state']['layers'][1]['x']=3
+        calls=[]
+        def fill(image,mask,model,clip,vae,prompt,*args):
+            calls.append((mask.clone(),prompt))
+            color=torch.tensor([0.,0.,1.]) if prompt.startswith('sky,') else torch.ones(3)
+            return image*(1-mask[...,None])+color*mask[...,None]
+        mm=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
+        comfy=types.ModuleType('comfy');comfy.model_management=mm
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=fill),patch.object(nodes,'detect',return_value=cloud[None]):
+            result,base=nodes.LayersReconstruct().run(p,None,None,None,None,None,'sky with clouds','',True,0,0,2,6,0,0,'independent scene layers')
+        self.assertEqual(len(calls),2)
+        self.assertTrue(torch.all(calls[0][0][0][torch.maximum(cloud,person).bool()]==1))
+        self.assertNotIn('sky with clouds',calls[0][1])
+        self.assertTrue(torch.equal(result['masks'][1],cloud))
+        self.assertTrue(torch.equal(result['rgbs'][1][visible_cloud.bool()],image[0][visible_cloud.bool()]))
+        self.assertTrue(torch.all(result['masks'][0]==1))
+        self.assertIsNone(result['background'])
+        self.assertEqual(result['state']['layers'][1]['x'],3)
+        self.assertTrue(torch.equal(p['masks'][1],visible_cloud))
+        self.assertTrue(nodes.ui_payload(result,result['state'])['layers_project'][0]['reconstructed'])
+        self.assertNotIn('background',nodes.ui_payload(result,result['state'])['layers_project'][0])
+        # Hiding other layers reveals the clean base; no stationary cloud copy remains.
+        self.assertTrue(torch.all(base[...,0]==0))
+        self.assertTrue(torch.all(base[...,2]==1))
+        result['state']['layers'][1]['visible']=False
+        result['state']['layers'][2]['visible']=False
+        rendered,_=nodes.render(result)
+        self.assertTrue(torch.equal(rendered[...,:3],base))
+        result['state']['layers'][0]['visible']=False
+        transparent,_=nodes.render(result)
+        self.assertTrue(torch.all(transparent[...,3]==0))
+
+    def test_independent_scene_requires_completion_and_backmost_surface(self):
+        mm=types.SimpleNamespace();comfy=types.ModuleType('comfy');comfy.model_management=mm
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint') as fill:
+            for enabled in (False,True):
+                with self.assertRaisesRegex(ValueError,'backmost layer'):
+                    nodes.LayersReconstruct().run(self.project(),None,None,None,None,None,'','',enabled,32,0,2,6,reconstruction_mode='independent scene layers')
+            base_project=self.project();base_project['state']['layers'][0]['kind']='background'
+            with self.assertRaisesRegex(ValueError,'complete_hidden'):
+                nodes.LayersReconstruct().run(base_project,None,None,None,None,None,'','',False,32,0,2,6,reconstruction_mode='independent scene layers')
+            fill.assert_not_called()
+
 
 if __name__=='__main__':unittest.main()
