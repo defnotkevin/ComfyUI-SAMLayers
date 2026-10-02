@@ -331,7 +331,9 @@ class LayersSegmentObjects:
         for item in selected:
             x0,y0,x1,y1 = item['bbox']
             box = {'x':x0*w/1000,'y':y0*h/1000,'width':(x1-x0)*w/1000,'height':(y1-y0)*h/1000}
-            prompt = re.sub(r':\d+\s*$', '', item['prompt'])+':1'
+            # Keep candidates until their overlap with this instance's box is scored.
+            # A :1 text limit can return the same highest-confidence cloud for both boxes.
+            prompt = re.sub(r':\d+\s*$', '', item['prompt'])+f':{MAX_LAYERS}'
             if item.get('confirmed_mask'):
                 mask = read_mask(item['confirmed_mask'], (w,h))
             else:

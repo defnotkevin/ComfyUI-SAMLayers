@@ -175,6 +175,12 @@ def discovery_prompt(detail, max_objects, pixel_size=None, scene_scope='full sce
                  'Describe sky as blue sky, excluding clouds; do not use a combined sky-with-clouds description. '
                  'Do not duplicate one region as both grass and hill. Order layers back to front, with sky first. '
                  'Do not invent elements absent from the image. Return an empty objects array if none are visible. ')
+    elif scene_scope == 'sky pass':
+        granularity = ''
+        scope = ('Inspect the image specifically for visible sky between and around clouds and subjects. '
+                 'List ONLY the sky region, named sky, with a description excluding clouds and foreground subjects. '
+                 'Use kind background and its enclosing visible bounding box. '
+                 'Return an empty objects array if no sky is visible, including indoor scenes. Do not invent sky. ')
     elif scene_scope == 'surface pass':
         granularity = ''
         scope = ('Inspect the entire image, especially its lower portion, for visible ground and structural surfaces. '
@@ -234,10 +240,10 @@ def run_vision(pil_image, model_dir, detail, max_objects, scene_scope='full scen
                 generated = inputs = None
                 try:
                     items = normalize_discovery(raw, pixel_size=pixel_size,
-                        include_background=scope in ('subjects pass', 'background pass', 'surface pass'),
-                        allow_empty=scope in ('subjects pass', 'background pass', 'surface pass'),
+                        include_background=scope in ('subjects pass', 'background pass', 'surface pass', 'sky pass'),
+                        allow_empty=scope in ('subjects pass', 'background pass', 'surface pass', 'sky pass'),
                         kind_hint='object' if scope == 'subjects pass' else
-                            ('background' if scope in ('background pass', 'surface pass') else None))
+                            ('background' if scope in ('background pass', 'surface pass', 'sky pass') else None))
                     if scope == 'background pass':
                         if any(re.search(r'\bclouds\b', item['name'], re.I) for item in items):
                             raise ValueError('Split clouds into individual entries with separate tight boxes, not one clouds entry.')
@@ -272,9 +278,12 @@ def run_vision(pil_image, model_dir, detail, max_objects, scene_scope='full scen
         backgrounds = discover('background pass', remaining) if remaining else []
         remaining -= len(backgrounds)
         surfaces = discover('surface pass', remaining) if remaining else []
-        if not subjects and not backgrounds and not surfaces:
+        remaining -= len(surfaces)
+        sky = (discover('sky pass', min(1, remaining))
+               if remaining and not any(re.search(r'\bsky\b', item['name'], re.I) for item in backgrounds) else [])
+        if not subjects and not backgrounds and not surfaces and not sky:
             raise ValueError('No visible scene layers found. Try foreground discovery or add objects manually.')
-        return backgrounds + surfaces + subjects
+        return sky + backgrounds + surfaces + subjects
     finally:
         # Do not retain a second GPU model while SAM3/reconstruction executes.
         del generated, inputs, model, processor

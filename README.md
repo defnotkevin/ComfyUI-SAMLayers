@@ -427,10 +427,17 @@ every environmental layer. The reconstructed base can still contain environmenta
 features when those layers are moved. Use the editing-only workflow for transparent
 cutouts; review generated fills before relying on hidden background content.
 
-Full-scene discovery uses three focused prompts with one Qwen model load:
+Full-scene discovery starts with three focused prompts with one Qwen model load:
 foreground subjects, sky/cloud instances, then ground/structural surfaces using
-the remaining layer budget. Results are merged with backgrounds behind subjects. A collective
+the remaining layer budget. If sky was omitted and capacity remains, a focused sky check
+runs and may return no sky for scenes without it. Results are merged with backgrounds behind subjects. A collective
 `clouds` entry triggers the bounded repair pass requesting individual cloud boxes.
 This avoids the observed single-pass result that omitted the person and grouped
 both clouds. Model accuracy still requires live review; the repair is not a
 guarantee that every visible instance will be found.
+
+Reviewed-instance segmentation retains multiple SAM3 text candidates until matching
+them to each reviewed bounding box. This prevents an early single-result limit
+from returning the same highest-confidence cloud for separate left/right entries.
+The latest RunPod test of cc91cf5 found four discovery entries but only three masks;
+these candidate-selection and missing-sky corrections still require GPU validation.

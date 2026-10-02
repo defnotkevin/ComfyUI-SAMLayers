@@ -78,7 +78,7 @@ class DiscoveryTests(unittest.TestCase):
         left={'name':'cloud left','bbox':[0,0,20,10],'kind':'background'}
         right={'name':'cloud right','bbox':[35,0,56,10],'kind':'background'}
         surface={'name':'grassy hill','bbox':[0,30,56,56],'kind':'terrain'}
-        responses=iter([json.dumps([subject]),json.dumps([collective]),json.dumps([left,right]),json.dumps([surface])])
+        responses=iter([json.dumps([subject]),json.dumps([collective]),json.dumps([left,right]),json.dumps([surface]),json.dumps([{'name':'sky','bbox':[0,0,56,30],'kind':'background'}])])
         prompts=[];loads=[]
         mm=types.SimpleNamespace(unload_all_models=lambda:None,soft_empty_cache=lambda:None,
             get_torch_device=lambda:'cpu',throw_exception_if_processing_interrupted=lambda:None)
@@ -102,12 +102,13 @@ class DiscoveryTests(unittest.TestCase):
             with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm,
                 'transformers':types.SimpleNamespace(AutoProcessor=Processor,Qwen2_5_VLForConditionalGeneration=Model)}),patch('torch.cuda.is_available',return_value=True):
                 result=run_vision(Image.new('RGB',(56,56)),directory,'whole objects',24)
-        self.assertEqual([x['name'] for x in result],['cloud left','cloud right','grassy hill','person'])
+        self.assertEqual([x['name'] for x in result],['sky','cloud left','cloud right','grassy hill','person'])
         self.assertTrue(all(x['enabled'] for x in result))
         self.assertEqual(len(loads),1)
         self.assertIn('ONLY foreground subjects',prompts[0])
         self.assertIn('visible sky and each cloud separately',prompts[1])
         self.assertIn('ground and structural surfaces',prompts[3])
+        self.assertIn('specifically for visible sky',prompts[4])
 
     def test_empty_pass_does_not_relax_saved_review_parser(self):
         self.assertEqual(normalize_discovery('{"objects":[]}',allow_empty=True),[])
@@ -271,8 +272,20 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(len(project['masks']),1)
         self.assertEqual(detector.call_count,2) # background unchecked
         self.assertEqual(detector.call_args.kwargs['bboxes'],[{'x':20.,'y':10.,'width':100.,'height':85.}])
-        self.assertEqual(detector.call_args.args[3],'person:1')
+        self.assertEqual(detector.call_args.args[3],f'person:{nodes.MAX_LAYERS}')
         self.assertEqual(project['state']['layers'][0]['name'],'person')
+
+    def test_same_text_clouds_select_distinct_candidates_by_box(self):
+        items=[{'name':'left cloud','prompt':'white cloud:1','bbox':[0,0,400,400], 'kind':'background','enabled':True},
+               {'name':'right cloud','prompt':'white cloud:1','bbox':[600,0,1000,400], 'kind':'background','enabled':True}]
+        masks=torch.zeros(2,20,20);masks[0,:8,:8]=1;masks[1,:8,12:]=1
+        # Reproduce the native text cap: :1 exposes only the highest-ranked instance.
+        def candidates(model,image,clip,prompt,**kwargs):
+            return masks[:int(prompt.rsplit(':',1)[1])]
+        with patch.object(nodes,'detect',side_effect=candidates):
+            result=nodes.LayersSegmentObjects().run({'image':torch.zeros(1,20,20,3),'objects':items},None,None,.5,.9)[0]
+        self.assertEqual([x['name'] for x in result['state']['layers']],['left cloud','right cloud'])
+        self.assertTrue(torch.equal(result['masks'],masks))
 
     def test_missing_detection_is_actionable(self):
         catalog={'image':torch.zeros(1,16,24,3),'objects':objects()}
