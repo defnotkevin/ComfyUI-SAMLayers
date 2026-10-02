@@ -296,6 +296,30 @@ Hidden-object completion is an approximation: there is no depth model or guarant
 
 The reconstruction node uses native `InpaintModelConditioning`, `KSampler`, and VAE decoding. Sampling and SAM3 refinement run sequentially; ComfyUI handles model residency. Start with 512–768 pixel images for the first 3090 test. Peak VRAM use and model-specific quality have not been benchmarked here.
 
+### Background removal quality controls
+
+The reconstruction node separates the background removal mask from the editable
+cutout alpha. Every nonzero cutout pixel is fully removed before filling, so soft
+edges cannot blend the original object back into the generated background.
+`removal_margin` expands that solid area (default **12 source pixels**), and
+`removal_feather` adds a soft transition outside it (default **4 pixels**).
+Neither control changes the object's editable mask. Pixels outside the removal
+mask and its feather remain unchanged. Increase the margin for residual outlines;
+larger margins also regenerate more of the surrounding scene.
+
+Existing workflows use these defaults when the new optional inputs are absent.
+`expand_pixels` is a separate control for estimating hidden-object completion
+regions; it does not control background removal.
+
+For a background-only test, set `complete_hidden` to **false**. Setting it to true
+also attempts to reconstruct object parts covered by foreground layers, such as
+the chair behind a person. Those generated parts are estimates, not recovered
+original pixels. Background removal runs in either mode.
+
+The removal-mask regression tests pass locally. Visual improvement with SD 1.5
+still needs a fresh RunPod reconstruction after deployment; a softer transition
+cannot guarantee a correct generated scene.
+
 ## Existing Compositor V4
 
 [`examples/sam3_layers_v4_bridge.json`](examples/sam3_layers_v4_bridge.json) adds the existing `CompositorConfig4` and `Compositor4` nodes from **ComfyUI-enricos-nodes**. Install that pack separately.
@@ -369,3 +393,23 @@ RunPod smoke checklist:
 - [Compositor V4](https://github.com/erosDiffusion/ComfyUI-enricos-nodes/blob/master/Compositor4.py)
 
 No upstream compositor code is vendored or modified.
+
+### Direct compositor controls
+
+The layer editor supports dragging cutouts to move them, proportional resizing
+with the four selection corner handles, and dragging the grip beside a layer name
+to change its stacking order. The list reads front to back. Bring to front / Send
+to back and the existing up/down buttons are available without dragging.
+
+With the canvas focused, arrow keys nudge the selection by one image pixel;
+Shift+arrow nudges by ten. Grouped layers move, resize, and reorder together.
+Resize and move actions support Undo/Redo, and Apply & Run saves transforms and
+stacking in the workflow's editor state. Resizing preserves aspect ratio; numeric
+Scale and Rotation controls remain available. These controls work on existing
+layer masks and do not automatically discover additional background layers.
+
+Rotate a selected mask and its cutout together by dragging the round handle
+outside the selection. Rotation uses the selection's center, including grouped
+or multiple selected layers. Hold Shift while dragging to snap the rotation delta
+to 15-degree increments. Numeric Rotation remains available for exact angles;
+rotation supports Undo/Redo and is saved with Apply & Run.

@@ -28,3 +28,4 @@
 
 .objects-preview{align-self:start;touch-action:none;}
 .objects-body section>div[hidden]{display:none;}
+.layers-row.drop-front{border-top:3px solid #38bdf8}.layers-row.drop-back{border-bottom:3px solid #38bdf8}.layers-row button[draggable=true]{cursor:grab}.layers-scroll canvas:focus-visible{outline:2px solid #38bdf8;outline-offset:3px}

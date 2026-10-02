@@ -1,7 +1,7 @@
 import { addZoomControls } from './zoom.js';
 import { app } from '../../scripts/app.js';
 import { hideEditorState, editorStatus } from './editor_status.js';
-import { layerMatrix, matrix, invertPoint, ungroup } from './math.js';
+import { layerMatrix, matrix, invertPoint, ungroup, transformPoint, resizeTransform, moveLayerBlock, rotateTransform } from './math.js';
 
 const clone = x => JSON.parse(JSON.stringify(x));
 const el = (tag, text, parent, cls) => {
@@ -13,7 +13,7 @@ const canvas = (w,h) => {const c=document.createElement('canvas');c.width=w;c.he
 const load = src => new Promise((ok,fail)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=()=>fail(new Error('Cannot load layer image'));i.src=src;});
 const css=document.createElement('link');css.rel='stylesheet';css.href=new URL('./layers.css',import.meta.url).href;document.head.append(css);
 
-class Editor {
+export class Editor {
     constructor(node, payload) {
         this.node=node;this.payload=payload;this.state=clone(payload.state);this.selected=new Set();this.history=[];this.future=[];
     }
@@ -33,7 +33,7 @@ class Editor {
         this.view=canvas(this.state.width,this.state.height);this.stage.append(this.view);
         this.floatingEdit=button(this.stage,'Edit mask',()=>this.editSelected());
         this.floatingEdit.className='layers-floating-edit';this.floatingEdit.hidden=true;
-        this.zoomControl=addZoomControls(toolbar,this.scroll,this.view,()=>this.positionEditButton());
+        this.zoomControl=addZoomControls(toolbar,this.scroll,this.view,()=>this.draw());
         this.side=el('aside',null,this.body);
         this.dialog.addEventListener('cancel',()=>this.close());this.dialog.showModal();
         this.original=await load(this.payload.image);
@@ -84,7 +84,7 @@ class Editor {
             if(this.selected.has(layer.id)){const b=this.assets.get(layer.id).bounds;if(b[2]>=0){ctx.strokeStyle='#38bdf8';ctx.lineWidth=2/Math.max(.01,Math.hypot(...layerMatrix(layer,this.state).slice(0,2)));ctx.strokeRect(b[0],b[1],b[2]-b[0],b[3]-b[1]);}}
             ctx.restore();
         }
-        this.positionEditButton();
+        this.drawHandles(ctx);this.positionEditButton();
     }
     point(event,target=this.view){const r=target.getBoundingClientRect();return[(event.clientX-r.left)*target.width/r.width,(event.clientY-r.top)*target.height/r.height];}
     hit(x,y){
@@ -94,24 +94,96 @@ class Editor {
             if(u>=0&&v>=0&&u<w&&v<h&&this.assets.get(l.id).alpha[Math.floor(v)*w+Math.floor(u)]>20)return l;
         }return null;
     }
+    targets(){
+        const targets=new Map();
+        for(const layer of this.state.layers.filter(l=>this.selected.has(l.id)))
+            targets.set(layer.group||layer.id,layer.group?this.state.groups[layer.group]:layer);
+        return [...targets.values()];
+    }
+    selectionBounds(){
+        const groups=new Set(this.state.layers.filter(l=>this.selected.has(l.id)).map(l=>l.group).filter(Boolean)), points=[];
+        for(const layer of this.state.layers){
+            if(!this.selected.has(layer.id)&&!groups.has(layer.group))continue;
+            if(layer.visible===false||this.state.groups[layer.group]?.visible===false)continue;
+            const b=this.assets.get(layer.id)?.bounds;if(!b||b[2]<0)continue;
+            const m=layerMatrix(layer,this.state);
+            for(const [x,y] of [[b[0],b[1]],[b[2],b[1]],[b[2],b[3]],[b[0],b[3]]])points.push(transformPoint(m,x,y));
+        }
+        if(!points.length)return null;
+        return [Math.min(...points.map(p=>p[0])),Math.min(...points.map(p=>p[1])),Math.max(...points.map(p=>p[0])),Math.max(...points.map(p=>p[1]))];
+    }
+    handles(){
+        const b=this.selectionBounds();return b?[[b[0],b[1]],[b[2],b[1]],[b[2],b[3]],[b[0],b[3]]]:[];
+    }
+    handleSize(){return 10*this.view.width/(this.view.getBoundingClientRect().width||this.view.width);}
+    handleAt(p){const radius=this.handleSize();return this.handles().findIndex(h=>Math.hypot(h[0]-p[0],h[1]-p[1])<=radius);}
+    rotationHandle(){
+        const b=this.selectionBounds();if(!b)return null;
+        const size=this.handleSize(),x=(b[0]+b[2])/2;
+        return [x,b[1]>=size*4?b[1]-size*3:Math.min(this.state.height-size,b[3]+size*3)];
+    }
+    rotationAt(p){const h=this.rotationHandle();return h&&Math.hypot(h[0]-p[0],h[1]-p[1])<=this.handleSize();}
+    drawHandles(ctx){
+        const handles=this.handles();if(!handles.length)return;
+        const size=this.handleSize();ctx.save();ctx.setTransform(1,0,0,1,0,0);
+        ctx.strokeStyle='#38bdf8';ctx.fillStyle='#f8fafc';ctx.lineWidth=size/5;
+        ctx.strokeRect(handles[0][0],handles[0][1],handles[2][0]-handles[0][0],handles[2][1]-handles[0][1]);
+        for(const [x,y]of handles){ctx.fillRect(x-size/2,y-size/2,size,size);ctx.strokeRect(x-size/2,y-size/2,size,size);}
+        const rotation=this.rotationHandle();
+        if(rotation){const mid=(handles[0][0]+handles[1][0])/2;
+            ctx.beginPath();ctx.moveTo(mid,rotation[1]<handles[0][1]?handles[0][1]:handles[2][1]);ctx.lineTo(...rotation);ctx.stroke();
+            ctx.beginPath();ctx.arc(...rotation,size*.65,0,Math.PI*2);ctx.fill();ctx.stroke();
+        }
+        ctx.restore();
+    }
     bindViewport(){
         let drag=null;
+        this.view.tabIndex=0;this.view.setAttribute('aria-label','Layer canvas. Drag to move; drag a corner to resize; drag the round handle to rotate (Shift snaps to 15 degrees); arrow keys to nudge.');
         this.view.onpointerdown=e=>{
-            if(e.button!==0)return;const p=this.point(e),l=this.hit(...p);if(!l){this.selected.clear();this.list();return;}
-            if(e.shiftKey){if(this.selected.has(l.id))this.selected.delete(l.id);else this.selected.add(l.id);this.list();return;}
-            if(!this.selected.has(l.id)){this.selected.clear();this.selected.add(l.id);}
-            const targets=new Map();for(const a of this.state.layers.filter(x=>this.selected.has(x.id)))targets.set(a.group||a.id,a.group?this.state.groups[a.group]:a);
-            this.snapshot();drag={p,targets:[...targets.values()].map(t=>({t,x:t.x||0,y:t.y||0}))};
+            if(e.button!==0)return;this.view.focus({preventScroll:true});const p=this.point(e),handle=this.handleAt(p);
+            if(this.rotationAt(p)){
+                const b=this.selectionBounds(),pivot=[(b[0]+b[2])/2,(b[1]+b[3])/2];
+                this.snapshot();drag={mode:'rotate',pivot,lastAngle:Math.atan2(p[1]-pivot[1],p[0]-pivot[0]),degrees:0,targets:this.targets().map(t=>({t,start:{...t}}))};
+            }else if(handle>=0&&!e.shiftKey){
+                const handles=this.handles(),anchor=handles[(handle+2)%4];
+                this.snapshot();drag={mode:'resize',p,anchor,corner:handles[handle],targets:this.targets().map(t=>({t,start:{...t}}))};
+            }else{
+                const l=this.hit(...p);if(!l){this.selected.clear();this.list();return;}
+                if(e.shiftKey){if(this.selected.has(l.id))this.selected.delete(l.id);else this.selected.add(l.id);this.list();return;}
+                if(!this.selected.has(l.id)){this.selected.clear();this.selected.add(l.id);}
+                this.snapshot();drag={mode:'move',p,targets:this.targets().map(t=>({t,start:{...t}}))};
+            }
             this.view.setPointerCapture(e.pointerId);this.list();
         };
-        this.view.onpointermove=e=>{if(!drag)return;const p=this.point(e);for(const {t,x,y} of drag.targets){t.x=x+p[0]-drag.p[0];t.y=y+p[1]-drag.p[1];}this.draw();};
-        this.view.onpointerup=()=>{drag=null;this.list();};this.view.onpointercancel=()=>{drag=null;};
+        this.view.onpointermove=e=>{
+            const p=this.point(e);
+            if(!drag){const h=this.handleAt(p);this.view.style.cursor=this.rotationAt(p)?'grab':h>=0?(h%2?'nesw-resize':'nwse-resize'):this.hit(...p)?'move':'default';return;}
+            if(drag.mode==='rotate'){
+                const angle=Math.atan2(p[1]-drag.pivot[1],p[0]-drag.pivot[0]),delta=angle-drag.lastAngle;
+                drag.degrees+=Math.atan2(Math.sin(delta),Math.cos(delta))*180/Math.PI;drag.lastAngle=angle;
+                const degrees=e.shiftKey?Math.round(drag.degrees/15)*15:drag.degrees;
+                for(const {t,start}of drag.targets)Object.assign(t,rotateTransform(start,drag.pivot,degrees,this.state.width,this.state.height));
+            }else if(drag.mode==='resize'){
+                const v=[drag.corner[0]-drag.anchor[0],drag.corner[1]-drag.anchor[1]],q=[drag.corner[0]+p[0]-drag.p[0]-drag.anchor[0],drag.corner[1]+p[1]-drag.p[1]-drag.anchor[1]];
+                const lower=Math.max(...drag.targets.map(({start})=>.01/(start.scale??1))),upper=Math.min(...drag.targets.map(({start})=>100/(start.scale??1)));
+                const ratio=Math.max(lower,Math.min(upper,(q[0]*v[0]+q[1]*v[1])/Math.max(1,v[0]*v[0]+v[1]*v[1])));
+                for(const {t,start}of drag.targets)Object.assign(t,resizeTransform(start,drag.anchor,ratio,this.state.width,this.state.height));
+            }else for(const {t,start}of drag.targets){t.x=(start.x||0)+p[0]-drag.p[0];t.y=(start.y||0)+p[1]-drag.p[1];}
+            this.draw();
+        };
+        this.view.onpointerup=()=>{drag=null;this.list();};
+        this.view.onpointercancel=()=>{if(drag){for(const {t,start}of drag.targets)Object.assign(t,start);drag=null;this.list();}};
+        this.view.onkeydown=e=>{
+            const delta={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];
+            if(!delta||!this.selected.size)return;e.preventDefault();e.stopPropagation();this.snapshot();
+            for(const t of this.targets()){t.x=(t.x||0)+delta[0]*(e.shiftKey?10:1);t.y=(t.y||0)+delta[1]*(e.shiftKey?10:1);}this.list();
+        };
         this.view.ondblclick=e=>{const l=this.hit(...this.point(e));if(l)this.maskPopup(l);};
     }
     list(){
         this.draw();
         this.side.replaceChildren();el('h3','Layers · front to back',this.side);
-        el('p','Shift-click to select several. Double-click an object to edit its mask.',this.side,'layers-help');
+        el('p','Drag an object to move it; drag its corners to resize proportionally. Drag the round handle to rotate (Shift: 15° steps). Arrow keys nudge 1 px (Shift: 10 px). Drag a layer’s grip to change stacking. Shift-click selects several; double-click edits the mask.',this.side,'layers-help');
         const groupSeen=new Set();
         for(const layer of [...this.state.layers].reverse()){
             if(layer.group&&!groupSeen.has(layer.group)){
@@ -120,22 +192,35 @@ class Editor {
                 button(row,'Select group',()=>{this.selected=new Set(this.state.layers.filter(l=>l.group===layer.group).map(l=>l.id));this.list();});
             }
             const row=el('div',null,this.side,`layers-row ${this.selected.has(layer.id)?'selected':''}`);
+            const grip=button(row,'⠿',()=>{this.selected=new Set([layer.id]);this.list();});
+            grip.draggable=true;grip.title=`Drag to reorder ${layer.name}`;grip.setAttribute('aria-label',grip.title);
+            grip.ondragstart=e=>{this.dragLayerId=layer.id;e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',layer.id);};
+            grip.ondragend=()=>{this.dragLayerId=null;this.side.querySelectorAll('.drop-front,.drop-back').forEach(r=>r.classList.remove('drop-front','drop-back'));};
+            row.ondragover=e=>{if(!this.dragLayerId)return;e.preventDefault();const front=e.clientY<row.getBoundingClientRect().top+row.offsetHeight/2;row.classList.toggle('drop-front',front);row.classList.toggle('drop-back',!front);e.dataTransfer.dropEffect='move';};
+            row.ondragleave=()=>row.classList.remove('drop-front','drop-back');
+            row.ondrop=e=>{e.preventDefault();const front=e.clientY<row.getBoundingClientRect().top+row.offsetHeight/2,next=moveLayerBlock(this.state.layers,this.dragLayerId,layer.id,front);this.dragLayerId=null;if(next!==this.state.layers){this.snapshot();this.state.layers=next;}this.list();};
             const select=el('input',null,row);select.type='checkbox';select.checked=this.selected.has(layer.id);
             select.onchange=()=>{if(select.checked)this.selected.add(layer.id);else this.selected.delete(layer.id);this.list();};
             button(row,layer.visible===false?'○':'●',()=>{this.snapshot();layer.visible=layer.visible===false;this.list();this.draw();});
             const name=el('input',null,row);name.value=layer.name;name.title='Object description / layer name';name.onchange=()=>{this.snapshot();layer.name=name.value;};
             button(row,'Mask',()=>this.maskPopup(layer));
-            button(row,'↑',()=>this.reorder(layer,1));button(row,'↓',()=>this.reorder(layer,-1));
+            button(row,'↑',()=>this.reorder(layer,1)).title='Bring forward';button(row,'↓',()=>this.reorder(layer,-1)).title='Send backward';
         }
         const selected=this.state.layers.find(l=>this.selected.has(l.id));
         if(selected){
             const target=selected.group?this.state.groups[selected.group]:selected;
             el('h3',selected.group?'Group transform':'Layer transform',this.side);
+            const actions=el('div',null,this.side,'layers-toolbar');
+            button(actions,'Bring to front',()=>this.restack(selected,true));button(actions,'Send to back',()=>this.restack(selected,false));
             for(const [key,title,step] of [['x','X',1],['y','Y',1],['scale','Scale',.05],['angle','Rotation',1]]){
                 const label=el('label',title,this.side,'layers-field'),input=el('input',null,label);input.type='number';input.step=step;input.value=target[key]??(key==='scale'?1:0);
                 input.onchange=()=>{const n=Number(input.value);if(!Number.isFinite(n)||(key==='scale'&&(n<.01||n>100)))return;this.snapshot();target[key]=n;this.draw();};
             }
         }
+    }
+    restack(layer,front){
+        const target=front?this.state.layers.at(-1):this.state.layers[0],next=moveLayerBlock(this.state.layers,layer.id,target.id,front);
+        if(next===this.state.layers)return;this.snapshot();this.state.layers=next;this.list();
     }
     reorder(layer,delta){
         // Group members stay contiguous: reorder the whole group as one block.

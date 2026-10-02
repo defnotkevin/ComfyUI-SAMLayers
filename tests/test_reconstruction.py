@@ -22,7 +22,7 @@ class BackgroundRemovalTests(unittest.TestCase):
         self.assertEqual(result.getpixel((36, 48)), 255)
         self.assertEqual(alpha.tobytes(), before)
         self.assertEqual(result.getpixel((0, 0)), 0)
-        self.assertTrue(any(0 < x < 255 for x in result.getdata()))
+        self.assertTrue(any(0 < x < 255 for x in result.tobytes()))
 
     def test_empty_mask_stays_empty(self):
         self.assertIsNone(background_removal_mask(Image.new('L', (64, 64))).getbbox())
