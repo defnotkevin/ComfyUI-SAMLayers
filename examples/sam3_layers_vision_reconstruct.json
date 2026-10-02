@@ -1,6 +1,6 @@
 {
   "last_node_id": 17,
-  "last_link_id": 19,
+  "last_link_id": 20,
   "nodes": [
     {
       "id": 1,
@@ -83,7 +83,7 @@
     {
       "id": 3,
       "type": "LayersReviewObjects",
-      "title": "2 \u2022 Review names, boxes and selection",
+      "title": "2 \u2022 Review and click-add objects",
       "pos": [
         800,
         0
@@ -100,6 +100,11 @@
           "name": "catalog",
           "type": "LAYERS_OBJECTS",
           "link": 2
+        },
+        {
+          "name": "sam_model",
+          "type": "MODEL",
+          "link": 20
         }
       ],
       "outputs": [
@@ -142,7 +147,8 @@
             4,
             7,
             12,
-            16
+            16,
+            20
           ]
         },
         {
@@ -279,7 +285,7 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# Semantic automatic discovery\n\nUse Qwen VL to list objects, review that list, then run SAM3. Whole objects is the default. Background surfaces are listed but unchecked; they are not automatically used as a reconstructed background. Review boxes and depth order: model output can be wrong.\n\n## Extra requirement for this workflow\n\nInstall into the SAME Python environment that runs ComfyUI:\n\n```sh\npython -m pip install -r custom_nodes/ComfyUI-SAMLayers/requirements-discovery.txt\n```\n\nDownload the full Qwen2.5-VL-3B-Instruct repository (weights, config, processor and tokenizer), not a single Qwen diffusion checkpoint:\n\nhttps://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct\n\nhttps://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/tree/main\n\nFrom your ComfyUI directory, with the Hugging Face CLI installed:\n\n```sh\nhf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir models/LLM/Qwen2.5-VL-3B-Instruct\n```\n\n```text\nComfyUI/\n|-- models/\n|   |-- LLM/\n|   |   `-- Qwen2.5-VL-3B-Instruct/\n|   |       |-- config.json\n|   |       |-- preprocessor_config.json\n|   |       |-- tokenizer_config.json\n|   |       |-- tokenizer.json\n|   |       |-- model.safetensors.index.json\n|   |       `-- model-*.safetensors\n|   `-- checkpoints/\n|       `-- sam3.1_multiplex_fp16.safetensors\n`-- custom_nodes/\n    `-- ComfyUI-SAMLayers/\n        `-- requirements-discovery.txt\n```\n\nThe tree is illustrative: retain ALL downloaded files with their actual names. Loading uses local files only. No model download occurs during execution. CUDA is required for this discovery node. Qwen unloads before SAM3 executes; 3090 memory usage still needs live verification.\n\nRun once, open Review object list, correct names/boxes and check the objects wanted, then Apply & Run. Later open the mask editor and Apply & Run again to render. Duplicate masks are filtered by IoU; similar but distinct objects remain separate. Automatic discovery can miss objects and does not guarantee a complete decomposition.\n"
+        "# Semantic automatic discovery\n\nUse Qwen VL to list objects, review that list, then run SAM3. Whole objects is the default. Background surfaces are listed but unchecked; they are not automatically used as a reconstructed background. Review boxes and depth order: model output can be wrong.\n\n## Extra requirement for this workflow\n\nInstall into the SAME Python environment that runs ComfyUI:\n\n```sh\npython -m pip install -r custom_nodes/ComfyUI-SAMLayers/requirements-discovery.txt\n```\n\nDownload the full Qwen2.5-VL-3B-Instruct repository (weights, config, processor and tokenizer), not a single Qwen diffusion checkpoint:\n\nhttps://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct\n\nhttps://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/tree/main\n\nFrom your ComfyUI directory, with the Hugging Face CLI installed:\n\n```sh\nhf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir models/LLM/Qwen2.5-VL-3B-Instruct\n```\n\n```text\nComfyUI/\n|-- models/\n|   |-- LLM/\n|   |   `-- Qwen2.5-VL-3B-Instruct/\n|   |       |-- config.json\n|   |       |-- preprocessor_config.json\n|   |       |-- tokenizer_config.json\n|   |       |-- tokenizer.json\n|   |       |-- model.safetensors.index.json\n|   |       `-- model-*.safetensors\n|   `-- checkpoints/\n|       `-- sam3.1_multiplex_fp16.safetensors\n`-- custom_nodes/\n    `-- ComfyUI-SAMLayers/\n        `-- requirements-discovery.txt\n```\n\nThe tree is illustrative: retain ALL downloaded files with their actual names. Loading uses local files only. No model download occurs during execution. CUDA is required for this discovery node. Qwen unloads before SAM3 executes; 3090 memory usage still needs live verification.\n\nRun once, open Review object list, correct names/boxes and check the objects wanted, then Apply & Run. Later open the mask editor and Apply & Run again to render. Duplicate masks are filtered by IoU; similar but distinct objects remain separate. Automatic discovery can miss objects and does not guarantee a complete decomposition.\n\n\n## Add a missed object\nIn Review Objects, choose Add object. Place include (+) and exclude (-) clicks, choose Preview SAM mask, inspect the blue highlight, then Confirm object. Repeat to add more objects, then Apply & Run. The SAM3 MODEL output must connect to Review Objects sam_model. Preview runs through the queue and pauses downstream segmentation. Confirmed masks are reused exactly. Advanced box edits discard the confirmed mask and return to text/box segmentation.\n"
       ]
     },
     {
@@ -834,6 +840,14 @@
       14,
       0,
       "LAYERS_PROJECT"
+    ],
+    [
+      20,
+      4,
+      0,
+      3,
+      1,
+      "MODEL"
     ]
   ],
   "groups": [

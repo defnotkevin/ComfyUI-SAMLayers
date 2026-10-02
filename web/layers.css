@@ -25,3 +25,6 @@
 .objects-row input:not([type=checkbox]){width:160px;}
 .objects-box{display:flex;gap:8px;flex-wrap:wrap;}
 .objects-box input{width:65px!important;}
+
+.objects-preview{align-self:start;touch-action:none;}
+.objects-body section>div[hidden]{display:none;}

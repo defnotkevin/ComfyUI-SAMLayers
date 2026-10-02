@@ -253,22 +253,56 @@ class LayersReviewObjects:
     @classmethod
     def INPUT_TYPES(cls):
         return {'required': {'catalog': ('LAYERS_OBJECTS',),
-            'object_state': ('STRING', {'default':'','multiline':True})}}
+            'object_state': ('STRING', {'default':'','multiline':True})},
+            'optional': {'sam_model': ('MODEL',)}}
     RETURN_TYPES = ('LAYERS_OBJECTS',)
     FUNCTION = 'run'
     CATEGORY = CATEGORY
     OUTPUT_NODE = True
 
-    def run(self, catalog, object_state):
+    def run(self, catalog, object_state, sam_model=None):
         from comfy_execution.graph import ExecutionBlocker
         from .discovery import parse_objects
         saved = json.loads(object_state or '{}')
         if not isinstance(saved, dict):
             raise ValueError('Invalid object review state.')
         waiting = saved.get('source') != catalog['source']
-        objects = catalog['objects'] if waiting else parse_objects(json.dumps(saved.get('objects')))
+        objects = catalog['objects'] if waiting else (parse_objects(json.dumps(saved.get('objects'))) if saved.get('objects') != [] else [])
         state = {'source':catalog['source'],'objects':objects}
         payload = {'state':state,'image':data_url(pil(catalog['image'][0], 'RGB')),'review_required':waiting}
+        request = saved.get('detect_object') if not waiting else None
+        if request:
+            if sam_model is None:
+                raise ValueError('Connect the SAM3 checkpoint MODEL output to Review Objects sam_model for click detection.')
+            h,w = catalog['image'].shape[1:3]
+            def points(key):
+                values = request.get(key, [])
+                if not isinstance(values, list) or len(values) > 128:
+                    raise ValueError('Use at most 128 clicks per type.')
+                for point in values:
+                    if not isinstance(point, dict) or any(isinstance(point.get(k), bool) or
+                        not isinstance(point.get(k), (float,int)) or not np.isfinite(point[k]) for k in ('x','y')):
+                        raise ValueError('Invalid click coordinates.')
+                    if not (0 <= point['x'] < w and 0 <= point['y'] < h):
+                        raise ValueError('Click lies outside the source image.')
+                return values
+            positive, negative = points('positive'), points('negative')
+            if not positive:
+                raise ValueError('Place at least one positive click inside the object.')
+            found = detect(sam_model, catalog['image'], positive=positive, negative=negative)
+            if not len(found) or not found.max().item():
+                raise ValueError('SAM found no object. Adjust the include/exclude clicks and try again.')
+            scores = sum(found[:,int(p['y']),int(p['x'])] for p in positive)
+            scores -= sum((found[:,int(p['y']),int(p['x'])] for p in negative), torch.zeros(len(found)))
+            mask = found[scores.argmax()]
+            ys,xs = torch.where(mask > .5)
+            if not len(xs):
+                raise ValueError('SAM returned an empty object mask. Adjust your clicks.')
+            payload['object_preview'] = {'id':request.get('id'), 'mask':data_url(pil(mask,'L')),
+                'bbox':[float(xs.min())/w*1000,float(ys.min())/h*1000,
+                        (float(xs.max())+1)/w*1000,(float(ys.max())+1)/h*1000]}
+            payload['review_required'] = True
+            waiting = True
         result = ExecutionBlocker(None) if waiting else dict(catalog,objects=objects)
         return {'ui':{'object_catalog':[payload]},'result':(result,)}
 
@@ -294,13 +328,16 @@ class LayersSegmentObjects:
             x0,y0,x1,y1 = item['bbox']
             box = {'x':x0*w/1000,'y':y0*h/1000,'width':(x1-x0)*w/1000,'height':(y1-y0)*h/1000}
             prompt = re.sub(r':\d+\s*$', '', item['prompt'])+':1'
-            found = detect(sam_model,image,sam_clip,prompt,threshold=threshold,bboxes=[box])
-            if not len(found) or not found.max().item():
-                raise ValueError(f"SAM3 found no mask for {item['name']}. Correct its box/description or uncheck it in Review Objects.")
-            # One prompt + box describes one instance. Never union unrelated candidates.
-            area = torch.zeros((h,w));area[int(y0*h/1000):max(int(y0*h/1000)+1,int(y1*h/1000)),int(x0*w/1000):max(int(x0*w/1000)+1,int(x1*w/1000))]=1
-            score = (found*area).sum((1,2))/(found+area-found*area).sum((1,2)).clamp_min(1)
-            mask = found[score.argmax()]
+            if item.get('confirmed_mask'):
+                mask = read_mask(item['confirmed_mask'], (w,h))
+            else:
+                found = detect(sam_model,image,sam_clip,prompt,threshold=threshold,bboxes=[box])
+                if not len(found) or not found.max().item():
+                    raise ValueError(f"SAM3 found no mask for {item['name']}. Correct its box/description or uncheck it in Review Objects.")
+                # One prompt + box describes one instance. Never union unrelated candidates.
+                area = torch.zeros((h,w));area[int(y0*h/1000):max(int(y0*h/1000)+1,int(y1*h/1000)),int(x0*w/1000):max(int(x0*w/1000)+1,int(x1*w/1000))]=1
+                score = (found*area).sum((1,2))/(found+area-found*area).sum((1,2)).clamp_min(1)
+                mask = found[score.argmax()]
             binary = mask>.5
             if any(float((binary & (old>.5)).sum())/max(1,int((binary | (old>.5)).sum())) >= duplicate_iou for old in masks):
                 continue

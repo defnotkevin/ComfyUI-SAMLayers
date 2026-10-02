@@ -40,7 +40,13 @@ def parse_objects(text):
         enabled = item.get('enabled', kind == 'object')
         if not isinstance(enabled, bool):
             raise ValueError('enabled must be true or false.')
-        result.append(dict(name=name.strip(), prompt=prompt.strip(), bbox=box, kind=kind, enabled=enabled))
+        entry = dict(name=name.strip(), prompt=prompt.strip(), bbox=box, kind=kind, enabled=enabled)
+        if 'confirmed_mask' in item:
+            mask = item['confirmed_mask']
+            if not isinstance(mask, str) or not mask.startswith('data:image/png;base64,') or len(mask) > 48_000_000:
+                raise ValueError('Invalid confirmed object mask.')
+            entry['confirmed_mask'] = mask
+        result.append(entry)
     return result
 
 

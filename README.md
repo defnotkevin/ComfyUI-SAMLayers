@@ -88,6 +88,26 @@ with your installed ComfyUI should also be checked after installation.
 6. Open the mask editor, review boundaries and depth order, then **Apply & Run**.
    In the reconstruction workflow, use the final editor to arrange completed layers.
 
+### Add missed objects with clicks
+
+Connect the SAM3 checkpoint's **MODEL** output to **Review Objects → sam_model**.
+Both `sam3_layers_vision_edit.json` and `sam3_layers_vision_reconstruct.json` include
+this connection. For an existing workflow, add the connection after restarting
+ComfyUI and refreshing the browser to load the updated nodes and frontend.
+
+Choose **Add object**, enter a name, and place several **Include (+)** clicks inside
+the intended object. Use **Exclude (−)** clicks on unwanted areas. Choose
+**Preview SAM mask** to queue detection; downstream segmentation pauses while you
+review the blue highlight. Adjust clicks and preview again as needed, then choose
+**Confirm object**. Repeat for other missed objects, then **Apply & Run**.
+
+The confirmed mask is stored in the workflow review state and reused by segmentation;
+it is not replaced by another text detection. Changing clicks invalidates the preview
+until SAM runs again. **Advanced box coordinates** remain available; changing a box
+discards its confirmed mask and returns that object to text/box segmentation.
+Preview is queued inference, not instantaneous inference on each click. RunPod UI
+and GPU behavior still need live verification.
+
 The whole-object prompt explicitly asks for a person with hands, clothing and shoes
 as one object. It is guidance, not a guarantee: Qwen can miss objects, invent labels,
 return inaccurate boxes or include parts. Review remains essential. Bounding boxes

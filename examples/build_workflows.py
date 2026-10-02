@@ -277,14 +277,16 @@ def semantic_base():
     w=Workflow()
     image=w.node('LoadImage','Source image',[0,0],[],[('IMAGE','IMAGE'),('MASK','MASK')],['example.png','image'])
     vision=w.node('LayersDiscoverObjects','1 • Discover whole objects',[400,0],[('image','IMAGE')],[('catalog','LAYERS_OBJECTS')],['Qwen2.5-VL-3B-Instruct','whole objects',24])
-    review=w.node('LayersReviewObjects','2 • Review names, boxes and selection',[800,0],[('catalog','LAYERS_OBJECTS')],[('catalog','LAYERS_OBJECTS')],[''])
+    review=w.node('LayersReviewObjects','2 • Review and click-add objects',[800,0],[('catalog','LAYERS_OBJECTS'),('sam_model','MODEL')],[('catalog','LAYERS_OBJECTS')],[''])
     sam=w.node('CheckpointLoaderSimple','SAM3.1 checkpoint',[800,400],[],[('MODEL','MODEL'),('CLIP','CLIP'),('VAE','VAE')],['sam3.1_multiplex_fp16.safetensors'])
     segment=w.node('LayersSegmentObjects','3 • Segment reviewed objects',[1200,0],[('catalog','LAYERS_OBJECTS'),('sam_model','MODEL'),('sam_clip','CLIP')],[('project','LAYERS_PROJECT')],[.5,.9])
     edit=w.node('LayersEditor','4 • Edit masks and arrange',[1600,0],[('project','LAYERS_PROJECT'),('sam_model','MODEL')],[('project','LAYERS_PROJECT')],[''])
-    w.link(image,0,vision,0);w.link(vision,0,review,0);w.link(review,0,segment,0);w.link(sam,0,segment,1);w.link(sam,1,segment,2);w.link(segment,0,edit,0);w.link(sam,0,edit,1)
+    w.link(image,0,vision,0);w.link(vision,0,review,0);w.link(sam,0,review,1);w.link(review,0,segment,0);w.link(sam,0,segment,1);w.link(sam,1,segment,2);w.link(segment,0,edit,0);w.link(sam,0,edit,1)
     note=w.node('MarkdownNote','Vision discovery requirements and setup',[0,750],[],[],['''# Semantic automatic discovery
 
 Use Qwen VL to list objects, review that list, then run SAM3. Whole objects is the default. Background surfaces are listed but unchecked; they are not automatically used as a reconstructed background. Review boxes and depth order: model output can be wrong.
+
+To add missed objects: connect SAM3 MODEL to Review Objects sam_model (wired here). Choose Add object, place include/exclude clicks, Preview SAM mask, inspect the blue highlight, then Confirm object. Apply & Run when finished. Preview queues inference and pauses downstream segmentation. Confirmed masks are reused; changing Advanced box coordinates discards the confirmed mask.
 
 ## Extra requirement for this workflow
 

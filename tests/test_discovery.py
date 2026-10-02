@@ -18,6 +18,37 @@ def objects():
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_click_preview_pauses_and_confirmed_mask_is_reused(self):
+        class Blocker:
+            def __init__(self,value):pass
+        catalog={'source':'click-source','image':torch.zeros(1,16,24,3),'objects':objects()}
+        mask=torch.zeros(1,16,24);mask[:,3:10,4:12]=1
+        state={'source':'click-source','objects':objects(),'detect_object':{
+            'id':'request-1','positive':[{'x':5,'y':4},{'x':9,'y':8}],
+            'negative':[{'x':20,'y':12}]}}
+        with patch.dict(sys.modules,{'comfy_execution.graph':types.SimpleNamespace(ExecutionBlocker=Blocker)}),patch.object(nodes,'detect',return_value=mask) as detector:
+            response=nodes.LayersReviewObjects().run(catalog,json.dumps(state),sam_model=object())
+        self.assertIsInstance(response['result'][0],Blocker)
+        preview=response['ui']['object_catalog'][0]['object_preview']
+        self.assertEqual(preview['id'],'request-1')
+        self.assertEqual(detector.call_args.kwargs['positive'],state['detect_object']['positive'])
+        confirmed={'name':'table','prompt':'table','kind':'object','enabled':True,
+            'bbox':preview['bbox'],'confirmed_mask':preview['mask']}
+        with patch.dict(sys.modules,{'comfy_execution.graph':types.SimpleNamespace(ExecutionBlocker=Blocker)}):
+            approved=nodes.LayersReviewObjects().run(catalog,json.dumps({'source':'click-source','objects':[confirmed]}))['result'][0]
+        with patch.object(nodes,'detect',side_effect=AssertionError('Confirmed mask must not be regenerated')):
+            project=nodes.LayersSegmentObjects().run(approved,None,None,.5,.9)[0]
+        self.assertTrue(torch.equal(project['masks'],mask))
+
+    def test_click_preview_rejects_missing_model_and_outside_clicks(self):
+        catalog={'source':'abc','image':torch.zeros(1,16,24,3),'objects':objects()}
+        state={'source':'abc','objects':objects(),'detect_object':{'positive':[{'x':999,'y':2}]}}
+        with patch.dict(sys.modules,{'comfy_execution.graph':types.SimpleNamespace(ExecutionBlocker=lambda _:None)}):
+            with self.assertRaisesRegex(ValueError,'Connect the SAM3'):
+                nodes.LayersReviewObjects().run(catalog,json.dumps(state))
+            with self.assertRaisesRegex(ValueError,'outside'):
+                nodes.LayersReviewObjects().run(catalog,json.dumps(state),sam_model=object())
+
     def test_pixel_boxes_use_explicit_dimensions_even_below_1000(self):
         raw='```json [ {"bbox_2d": [0, 468, 430, 672], "label": "floor"} ] ```'
         result=normalize_discovery(raw,pixel_size=(1036,672))[0]
