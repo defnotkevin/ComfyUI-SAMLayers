@@ -347,8 +347,8 @@
         "Node name for S&R": "LayersReconstruct"
       },
       "widgets_values": [
-        "empty room, continuous background, no people, no foreground objects",
-        "artifacts, duplicated objects, text, watermark",
+        "Continuous background matching the visible scene",
+        "",
         true,
         32,
         0,
@@ -359,7 +359,9 @@
         4,
         "foreground removal",
         30,
-        "Match the visible source image style, colors, lighting and texture. Preserve its level of detail."
+        "Match the visible source image style, colors, lighting and texture. Preserve its level of detail.",
+        64,
+        768
       ]
     },
     {

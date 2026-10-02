@@ -204,7 +204,7 @@ class LayersTests(unittest.TestCase):
         self.assertEqual(seen['sampler'][3],1.0)
         self.assertFalse(seen['noise_mask'])
         self.assertEqual(seen['encoded'][0][1],{'add_dict':{'guidance':6}})
-        self.assertIn('Exclude the following',seen['encoded'][0][0])
+        self.assertEqual(seen['encoded'][0][0],'p')
         self.assertEqual(seen['encoded'][1][0],'')
         self.assertEqual(tuple(out.shape),tuple(image.shape))
         self.assertTrue(torch.equal(out[mask==0],image[mask==0]))
@@ -241,7 +241,7 @@ class LayersTests(unittest.TestCase):
         calls=[]
         def fill(image,mask,model,clip,vae,prompt,*args):
             calls.append((mask.clone(),prompt))
-            color=torch.tensor([0.,0.,1.]) if prompt.startswith('sky,') else torch.ones(3)
+            color=torch.tensor([0.,0.,1.]) if prompt.startswith('Continuous sky') else torch.ones(3)
             return image*(1-mask[...,None])+color*mask[...,None]
         mm=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
         comfy=types.ModuleType('comfy');comfy.model_management=mm
@@ -279,6 +279,50 @@ class LayersTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'complete_hidden'):
                 nodes.LayersReconstruct().run(base_project,None,None,None,None,None,'','',False,32,0,2,6,reconstruction_mode='independent scene layers')
             fill.assert_not_called()
+
+    def test_local_completion_maps_crop_and_preserves_source_pixels(self):
+        image=torch.full((1,384,640,3),.2)
+        cloud=torch.zeros(384,640);cloud[40:90,100:200]=1
+        person=torch.zeros_like(cloud);person[65:140,140:165]=1
+        visible=cloud*(1-person)
+        p=nodes.new_project(image,torch.stack([1-torch.maximum(cloud,person),visible,person]),['sky','cloud on the right','person'])
+        p['state']['layers'][0]['kind']='background'
+        p['state']['layers'][1]['kind']='background'
+        calls=[]
+        def fill(image,mask,*args):
+            calls.append((tuple(image.shape),args[3],args[4]))
+            return torch.ones_like(image)
+        mm=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
+        comfy=types.ModuleType('comfy');comfy.model_management=mm
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=fill),patch.object(nodes,'detect',return_value=torch.ones(1,256,256)) as detect:
+            result,_=nodes.LayersReconstruct().run(p,None,None,None,None,None,'background','person, clouds',True,0,0,2,1,0,0,'independent scene layers',30,'flat colors',16,512)
+        self.assertEqual(calls[1][0],(1,512,512,3))
+        self.assertEqual(calls[1][1],'A complete cloud. flat colors')
+        self.assertEqual(calls[1][2],'')
+        self.assertEqual(tuple(detect.call_args.args[1].shape),(1,256,256,3))
+        hole=(cloud*person).bool()
+        self.assertTrue(torch.equal(result['masks'][1],cloud))
+        self.assertTrue(torch.equal(result['rgbs'][1][~hole],image[0][~hole]))
+        self.assertTrue(torch.all(result['rgbs'][1][hole]==1))
+
+    def test_surface_completion_keeps_fill_without_sam_rejection(self):
+        p=self.project();p['state']['layers'][0].update(name='grass',kind='background')
+        region=Image.new('L',(24,16));region.paste(255,(8,4,12,8))
+        p['state']['layers'][0]['completion']=nodes.data_url(region)
+        mm=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
+        comfy=types.ModuleType('comfy');comfy.model_management=mm
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=lambda image,*a:torch.ones_like(image)),patch.object(nodes,'detect') as detect:
+            result,_=nodes.LayersReconstruct().run(p,None,None,None,None,None,'background','',True,0,0,2,1)
+        detect.assert_not_called()
+        self.assertTrue(torch.all(result['masks'][0,4:8,8:12]==1))
+
+    def test_unchanged_object_completion_is_reported(self):
+        p=self.project();p['state']['layers'][0]['completion']=nodes.data_url(Image.new('L',(24,16),255))
+        mm=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
+        comfy=types.ModuleType('comfy');comfy.model_management=mm
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=lambda image,*a:image),patch.object(nodes,'detect',return_value=p['masks'][:1]):
+            with self.assertRaisesRegex(ValueError,'added no pixels'):
+                nodes.LayersReconstruct().run(p,None,None,None,None,None,'background','',True,0,0,2,1)
 
 
 if __name__=='__main__':unittest.main()

@@ -39,3 +39,32 @@ class BackgroundRemovalTests(unittest.TestCase):
         for margin, feather in [(-1, 4), (129, 4), (12, -1), (12, 33)]:
             with self.subTest(margin=margin, feather=feather), self.assertRaises(ValueError):
                 background_removal_mask(Image.new('L', (16, 16)), margin, feather)
+
+
+class CompletionGeometryTests(unittest.TestCase):
+    def test_silhouette_envelope_avoids_unrelated_box_corner(self):
+        from PIL import ImageDraw
+        visible=Image.new('L',(64,64));draw=ImageDraw.Draw(visible)
+        draw.polygon([(8,32),(32,8),(56,32),(32,56)],fill=255)
+        occluders=Image.new('L',visible.size)
+        occluders.paste(255,(28,20,36,44))
+        occluders.paste(255,(8,8,16,16))
+        visible.paste(0,(28,20,36,44))
+        hole=module.completion_region(visible,occluders,0)
+        self.assertEqual(hole.getpixel((32,32)),255)
+        self.assertEqual(hole.getpixel((9,9)),0)
+        self.assertEqual(hole.getpixel((20,32)),0)
+
+    def test_crop_contains_target_and_manual_hole_at_image_edge(self):
+        visible=Image.new('L',(640,384));visible.paste(255,(100,40,200,90))
+        hole=Image.new('L',visible.size);hole.paste(255,(140,65,165,90))
+        self.assertEqual(module.completion_crop(visible,hole,16),(22,0,278,256))
+        hole.paste(255,(630,375,640,384))
+        x0,y0,x1,y1=module.completion_crop(visible,hole,16)
+        self.assertLessEqual(x0,100);self.assertLessEqual(y0,40)
+        self.assertEqual((x1,y1),(640,384))
+
+    def test_empty_foreground_never_invents_completion(self):
+        visible=Image.new('L',(32,32));visible.paste(255,(8,8,20,20))
+        self.assertIsNone(module.completion_region(visible,Image.new('L',visible.size),32).getbbox())
+        with self.assertRaises(ValueError):module.completion_crop(Image.new('L',(8,8)),Image.new('L',(8,8)))

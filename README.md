@@ -292,7 +292,7 @@ Load [`examples/sam3_layers_reconstruct.json`](examples/sam3_layers_reconstruct.
 1. Choose an image, SAM3 checkpoint, object descriptions, and **select FLUX.1 Fill dev, its dual text encoders, and ae.safetensors** in the three reconstruction loaders.
 2. Describe the background without the selected objects in `background_prompt`.
 3. Run and use the **first editor** to refine masks and set the back-to-front order.
-4. For hidden parts, the automatic estimate intersects foreground masks with an expanded bounding box around the visible object. If it misses a hidden region, open that object's mask popup, choose **Hidden area to reconstruct**, and paint the desired region. **Automatic hidden area** clears this manual override.
+4. For hidden parts, the automatic estimate intersects foreground masks with an expanded convex envelope of the visible silhouette. If it misses a hidden region, open that object's mask popup, choose **Hidden area to reconstruct**, and paint the desired region. **Automatic hidden area** clears this manual override.
 5. Apply & Run. Reconstruction removes selected foreground objects to make a clean background;
    layers marked background are excluded from this removal union to avoid erasing
    the entire scene when sky or terrain is selected. For each partially hidden layer, it inpaints its candidate region, then runs SAM3 on the generated image to recover an object-shaped alpha mask. Pixels outside the fill region stay unchanged.
@@ -435,13 +435,15 @@ and uses it as a full-canvas editable base layer. It does not retain a second
 flattened backdrop. The IMAGE output is a preview of the completed base; do not
 composite that output underneath the editable stack or it will duplicate the base.
 
-Layers above the base use the original occluder masks and source-space boxes to
-estimate hidden regions, inpaint them, and resegment their completed shapes.
+Layers above the base use the original occluder masks and a silhouette envelope to
+estimate hidden regions. Local crops include the target and bounded context.
+Completed object shapes are resegmented; named continuous surfaces retain their
+bounded filled alpha region.
 Paint **Hidden area to reconstruct** to correct an estimated completion region.
 Transforms are applied after reconstruction. Moving the completed base itself can
-expose transparency at canvas edges. This mode derives the base prompt from its
-layer name (overriding `background_prompt`) and adds other layer names to the base
-negative prompt. Use a descriptive base name and review the layer order first.
+expose transparency at canvas edges. This mode derives a short positive base prompt from its
+layer name (overriding `background_prompt`). It does not list other scene objects
+in that prompt. Use a descriptive base name and review the layer order first.
 The new mode has CPU regression coverage; diffusion fill quality and completed
 cloud shapes still need RunPod validation. It cannot guarantee invisible geometry.
 
@@ -480,10 +482,9 @@ SD/SDXL and ordinary FLUX dev are rejected; there is no automatic fallback.
 Set the retained `cfg` widget to **1** in older workflows. Actual sampler CFG is
 always 1; `flux_guidance` controls the embedded guidance (default 30). Inpainting
 uses native FLUX Fill conditioning, 16-pixel padding and exact final compositing
-outside the requested mask. Conventional negative conditioning is unused at CFG 1,
-so `negative_prompt` exclusions are appended to the positive instruction. They are
-requests to the model, not hard constraints. Avoid excluding the layer you want to
-complete. DifferentialDiffusion is not required because this path supplies no
+outside the requested mask. Conventional negative conditioning is unused at CFG 1. The retained
+`negative_prompt` field is now ignored rather than appending object exclusions to
+the positive prompt; those lists risk introducing the very objects being removed. DifferentialDiffusion is not required because this path supplies no
 sampler noise mask; the mask is supplied through Fill conditioning.
 
 Set `style_prompt` for **all** base and object fills. For the current example:
@@ -500,3 +501,39 @@ Local tests validate conditioning, model rejection, alignment, unchanged pixels,
 and loader wiring. They do not validate generated cloud shapes. The existing
 completion-region estimation and SAM resegmentation still require visual review;
 this migration does not claim to have solved those quality limitations.
+
+
+### Local completion crops and region controls
+
+Object fills run on a crop around the visible target and its completion region,
+with `completion_context` pixels of context (default 64, minimum crop side 256
+unless the source is smaller). `completion_resolution` sets the crop's longest
+processing side (default 768); dimensions align to FLUX's 16-pixel grid. The result
+is mapped back to source coordinates. Final RGB changes are restricted to the
+completion region, with existing nonzero target-mask pixels protected exactly.
+The full-scene base fill still runs at source resolution.
+
+Automatic regions use a convex envelope of the visible silhouette, expanded by
+`expand_pixels`, intersected with front-layer occluders. This avoids unrelated
+bounding-box corners and bridges interrupted visible pieces, but can overestimate
+concave shapes. A painted **Hidden area to reconstruct** remains authoritative.
+Occluder pixels elsewhere inside the context crop are also removed for inference;
+those extra generated pixels are discarded from the final cutout.
+
+Background layers named sky, grass, hill(s), ground, floor, wall, ceiling or water
+are treated as continuous surfaces: their bounded completion alpha is retained
+without SAM punching out the old occluder silhouette. Other objects, including
+clouds, are resegmented within the local crop. A completion that adds no object
+pixels now raises an actionable error instead of silently succeeding. This check
+is not a guarantee of complete or correct hidden geometry.
+
+Prompts are short positive instructions: `Continuous sky`, `A complete cloud`,
+or `Continuous grass`, followed by style_prompt. Left/right positional suffixes
+are stripped from crop prompts, since their full-scene positions no longer apply.
+For the cartoon test use: `Flat-color cartoon, uniform solid colors and smooth
+outlines matching the visible image.` Avoid scene inventories and exclusion lists.
+
+Local tests cover crop placement, resizing/compositing registration, exact visible
+pixel preservation, manual regions, silhouette bounds, surface alpha and failed
+object completion. Generated quality still requires a RunPod visual test after
+these changes are pushed.

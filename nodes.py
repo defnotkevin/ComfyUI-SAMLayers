@@ -13,7 +13,7 @@ from PIL import Image, ImageFilter
 
 from .project import (VERSION, MAX_LAYERS, parse_state, layer_matrix,
                       inverse_pillow, visible)
-from .reconstruction import background_removal_mask
+from .reconstruction import background_removal_mask, completion_region, completion_crop
 
 CATEGORY = 'Layers'
 
@@ -456,10 +456,9 @@ def inpaint(image, mask, model, clip, vae, prompt, negative, seed, steps, guidan
     ph, pw = (-h) % multiple, (-w) % multiple
     pixels = torch.nn.functional.pad(image.movedim(-1, 1), (0, pw, 0, ph), mode='replicate').movedim(1, -1)
     padded_mask = torch.nn.functional.pad(mask, (0, pw, 0, ph))
-    # CFG=1 does not use conventional negative conditioning. Express exclusions
-    # in the instruction instead, and use FLUX's embedded guidance separately.
-    instruction = prompt + (f' Exclude the following from the generated area: {negative}.' if negative.strip() else '')
-    positive = clip.encode_from_tokens_scheduled(clip.tokenize(instruction), add_dict={'guidance': guidance})
+    # FLUX Fill uses embedded guidance at CFG 1. Keep the instruction positive;
+    # listing excluded scene objects can cause them to be generated again.
+    positive = clip.encode_from_tokens_scheduled(clip.tokenize(prompt), add_dict={'guidance': guidance})
     neg = clip.encode_from_tokens_scheduled(clip.tokenize(''))
     positive, neg, latent = nodes.InpaintModelConditioning().encode(
         positive=positive, negative=neg, pixels=pixels, vae=vae, mask=padded_mask, noise_mask=False)
@@ -474,8 +473,8 @@ class LayersReconstruct:
     def INPUT_TYPES(cls):
         return {'required': {'project': ('LAYERS_PROJECT',), 'model': ('MODEL',), 'clip': ('CLIP',), 'vae': ('VAE',),
             'sam_model': ('MODEL',), 'sam_clip': ('CLIP',),
-            'background_prompt': ('STRING', {'default': 'empty room, continuous background, no people, no foreground objects', 'multiline': True}),
-            'negative_prompt': ('STRING', {'default': 'artifacts, duplicated objects, text, watermark', 'multiline': True}),
+            'background_prompt': ('STRING', {'default': 'Continuous background matching the visible scene', 'multiline': True}),
+            'negative_prompt': ('STRING', {'default': '', 'multiline': True, 'tooltip': 'Legacy field, unused by FLUX at CFG 1. Describe the desired content positively in layer names and style_prompt.'}),
             'complete_hidden': ('BOOLEAN', {'default': True}),
             'expand_pixels': ('INT', {'default': 32, 'min': 0, 'max': 256}),
             'seed': ('INT', {'default': 0, 'min': 0, 'max': 0xffffffffffffffff}),
@@ -489,7 +488,9 @@ class LayersReconstruct:
                 'reconstruction_mode': (['foreground removal', 'independent scene layers'],
                     {'default': 'foreground removal', 'tooltip': 'Completes the backmost background surface as an editable base, then occluded layers. Requires complete_hidden. No flattened duplicate backdrop.'}),
                 'flux_guidance': ('FLOAT', {'default': 30, 'min': 0, 'max': 100, 'step': 0.5}),
-                'style_prompt': ('STRING', {'default': 'Match the visible source image style, colors, lighting and texture. Preserve its level of detail.', 'multiline': True})}}
+                'style_prompt': ('STRING', {'default': 'Match the visible source image style, colors, lighting and texture. Preserve its level of detail.', 'multiline': True}),
+                'completion_context': ('INT', {'default': 64, 'min': 0, 'max': 512, 'tooltip': 'Context around each local completion crop in source pixels.'}),
+                'completion_resolution': ('INT', {'default': 768, 'min': 256, 'max': 1536, 'step': 16, 'tooltip': 'Longest side for local FLUX completion; results return to source coordinates.'})}}
     RETURN_TYPES = ('LAYERS_PROJECT', 'IMAGE')
     RETURN_NAMES = ('project', 'background')
     FUNCTION = 'run'
@@ -498,7 +499,8 @@ class LayersReconstruct:
     def run(self, project, model, clip, vae, sam_model, sam_clip, background_prompt, negative_prompt,
             complete_hidden, expand_pixels, seed, steps, cfg, removal_margin=12, removal_feather=4,
             reconstruction_mode='foreground removal', flux_guidance=30,
-            style_prompt='Match the visible source image style, colors, lighting and texture. Preserve its level of detail.'):
+            style_prompt='Match the visible source image style, colors, lighting and texture. Preserve its level of detail.',
+            completion_context=64, completion_resolution=768):
         import comfy.model_management
         image, masks = project['image'], project['masks'].clone()
         state = json.loads(json.dumps(project['state']))
@@ -518,9 +520,8 @@ class LayersReconstruct:
             # The completed surface is itself editable, not duplicated below the stack.
             union = (1-source_masks[0]).clamp(0, 1)
             base_name = state['layers'][0]['name']
-            background_prompt = f'{base_name}, continuous unobstructed surface filling the entire image, same style and colors as the visible surface, no other objects'
-            excluded = ', '.join(layer['name'] for layer in state['layers'][1:])
-            base_negative = f'{negative_prompt}, {excluded}' if excluded else negative_prompt
+            background_prompt = f'Continuous {base_name} filling the image'
+            base_negative = ''
         else:
             base_negative = negative_prompt
         removal = tensor(background_removal_mask(pil(union, 'L'), removal_margin, removal_feather)).unsqueeze(0)
@@ -533,47 +534,67 @@ class LayersReconstruct:
             masks[0] = torch.ones_like(masks[0])
             state['layers'][0]['mask'] = data_url(pil(masks[0], 'L'))
         # State order is back-to-front. Restrict completion to foreground occluders
-        # near the visible object's bounding box; user can override with a painted region.
+        # within its silhouette envelope; user can override with a painted region.
         if complete_hidden:
             for i, layer in enumerate(state['layers']):
                 comfy.model_management.throw_exception_if_processing_interrupted()
                 if scene and i == 0:
                     continue
                 original = source_masks[i].clone()
+                front = source_masks[i+1:].amax(0) if i+1<len(masks) else torch.zeros_like(original)
                 region = layer.get('completion')
                 if region:
-                    hole = read_mask(region, (w, h)) * (1-original)
+                    hole = read_mask(region, (w, h)) * (original <= 0)
                 else:
-                    bbox = pil(original, 'L').getbbox()
-                    if bbox is None or i == len(masks)-1:
-                        continue
-                    x0, y0, x1, y1 = bbox
-                    near = torch.zeros_like(original)
-                    near[max(0,y0-expand_pixels):min(h,y1+expand_pixels), max(0,x0-expand_pixels):min(w,x1+expand_pixels)] = 1
-                    hole = source_masks[i+1:].amax(0) * near * (1-original)
+                    hole = tensor(completion_region(pil(original,'L'),pil(front,'L'),expand_pixels))
                 if hole.max().item() <= 0:
                     continue
-                description = re.sub(r" #\d+$", "", layer["name"])
-                if layer.get('discovery') == 'automatic' and re.fullmatch(r'Region \d+', description):
-                    description = 'the visible object'
-                prompt = f"{description}, complete intact object, natural continuation of visible shape and texture. Style: {style_prompt}"
-                completed = inpaint(image, hole.unsqueeze(0), model, clip, vae, prompt, negative_prompt,
-                                    (seed+i+1) % (2**64), steps, flux_guidance)
-                if layer.get('discovery') == 'automatic':
-                    # A region label is not a semantic object description. Use a
-                    # visible interior point to resegment its completed pixels.
-                    padded = torch.nn.functional.pad(original[None,None], (3,3,3,3))
-                    interior = torch.nn.functional.avg_pool2d(padded, 7, stride=1)[0,0] * original
-                    index = int(interior.argmax())
-                    candidates = detect(sam_model, completed, positive=[{'x': index % w, 'y': index // w}])
+                x0,y0,x1,y1 = completion_crop(pil(original,'L'),pil(hole,'L'),completion_context)
+                visible_crop=original[y0:y1,x0:x1]
+                hole_crop=hole[y0:y1,x0:x1]
+                # Erase occluder context as well as the requested hole, so a partial
+                # person does not remain in the crop conditioning. Only hole pixels
+                # are allowed into the final layer; visible target pixels are protected.
+                context_mask=torch.maximum(front,hole)
+                fill=tensor(background_removal_mask(pil(context_mask,'L'),removal_margin,removal_feather))
+                fill=fill[y0:y1,x0:x1]*(visible_crop<=0)
+                crop=image[:,y0:y1,x0:x1]
+                ch,cw=crop.shape[1:3]
+                scale=completion_resolution/max(ch,cw)
+                target=(max(16,round(ch*scale/16)*16),max(16,round(cw*scale/16)*16))
+                pixels=torch.nn.functional.interpolate(crop.movedim(-1,1),size=target,mode='bilinear',align_corners=False).movedim(1,-1)
+                fill_scaled=torch.nn.functional.interpolate(fill[None,None],size=target,mode='nearest')[0]
+                description=re.sub(r' #\d+$','',layer['name'])
+                description=re.sub(r'\s+on the (left|right)\b','',description,flags=re.I)
+                if layer.get('discovery')=='automatic' and re.fullmatch(r'Region \d+',description):
+                    description='visible object'
+                surface=layer.get('kind')=='background' and bool(re.search(
+                    r'\b(sky|grass|hill|hills|ground|floor|wall|ceiling|water)\b',description,re.I))
+                prompt=(f'Continuous {description}. ' if surface else f'A complete {description}. ')+style_prompt
+                generated=inpaint(pixels,fill_scaled,model,clip,vae,prompt,'',
+                                  (seed+i+1) % (2**64),steps,flux_guidance)
+                generated=torch.nn.functional.interpolate(generated.movedim(-1,1),size=(ch,cw),mode='bilinear',align_corners=False).movedim(1,-1)
+                # Restore original context exactly after resizing for reliable SAM matching.
+                completed=crop*(1-fill[None,...,None])+generated*fill[None,...,None]
+                if surface:
+                    # A continuous surface fills its bounded occlusion region. SAM
+                    # must not punch the old subject silhouette back out of this fill.
+                    alpha=torch.ones_like(hole_crop)
                 else:
-                    candidates = detect(sam_model, completed, sam_clip, re.sub(r' #\d+$', '', layer['name']))
-                if not len(candidates) or not candidates.max().item():
-                    raise ValueError(f"Could not segment reconstructed {layer['name']}; adjust its completion region/prompt.")
-                score = (candidates*original).sum((1,2)) / (candidates+original-candidates*original).sum((1,2)).clamp_min(1)
-                alpha = candidates[score.argmax()]
-                masks[i] = torch.maximum(original, alpha*hole)
-                rgbs[i] = completed[0]
+                    if layer.get('discovery')=='automatic':
+                        interior=torch.nn.functional.avg_pool2d(visible_crop[None,None],7,stride=1,padding=3)[0,0]*visible_crop
+                        index=int(interior.argmax())
+                        candidates=detect(sam_model,completed,positive=[{'x':index % cw,'y':index // cw}])
+                    else:
+                        candidates=detect(sam_model,completed,sam_clip,description)
+                    if not len(candidates) or not candidates.max().item():
+                        raise ValueError(f'Could not segment reconstructed {layer["name"]}; adjust its completion region or description.')
+                    score=(candidates*visible_crop).sum((1,2))/(candidates+visible_crop-candidates*visible_crop).sum((1,2)).clamp_min(1)
+                    alpha=candidates[score.argmax()]
+                    if not ((alpha>.5)&(hole_crop>.5)).any():
+                        raise ValueError(f'Completion added no pixels to {layer["name"]}. Review its hidden-area mask or description; the layer is not complete.')
+                masks[i,y0:y1,x0:x1]=torch.maximum(visible_crop,alpha*hole_crop)
+                rgbs[i,y0:y1,x0:x1]=crop[0]*(1-hole_crop[...,None])+completed[0]*hole_crop[...,None]
                 layer['mask'] = data_url(pil(masks[i], 'L'))
         result = dict(project, background=None if scene else background, masks=masks, rgbs=rgbs, state=state)
         # A new editor source signature invalidates only stale downstream edit sessions.
