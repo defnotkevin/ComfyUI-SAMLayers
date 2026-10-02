@@ -50,7 +50,7 @@ def parse_objects(text, allow_empty=False):
     return result
 
 
-def normalize_discovery(text, pixel_size=None, include_background=False, allow_empty=False):
+def normalize_discovery(text, pixel_size=None, include_background=False, allow_empty=False, kind_hint=None):
     """Accept common VLM field spellings at the model boundary only.
 
     Never invent names/boxes or guess a coordinate scale. Review state continues
@@ -110,8 +110,12 @@ def normalize_discovery(text, pixel_size=None, include_background=False, allow_e
         entry.setdefault('kind', 'background' if name.lower() in ('wall','floor','ceiling','sky') else 'object')
         # Qwen sometimes uses foreground for physical objects despite the schema.
         # Normalize only model output; saved review state stays canonical.
-        if entry['kind'] == 'foreground':
+        if entry['kind'] in ('foreground', 'character'):
             entry['kind'] = 'object'
+        if kind_hint in ('object', 'background'):
+            # Focused model passes already define the layer category. Saved review
+            # JSON still goes through parse_objects without this model-only hint.
+            entry['kind'] = kind_hint
         if include_background:
             entry['enabled'] = True
         normalized.append(entry)
@@ -164,13 +168,21 @@ def discovery_prompt(detail, max_objects, pixel_size=None, scene_scope='full sce
                  'Use kind object. Return an empty objects array if there are no visible foreground subjects. ')
     elif scene_scope == 'background pass':
         granularity = ''
-        scope = ('List ONLY visible environmental layers: sky, terrain, grass, water, walls, floors, and each cloud separately. '
+        scope = ('List ONLY the visible sky and each cloud separately. Do not list terrain, grass, water, walls or floors in this pass. '
                  'Do not list people, characters or foreground subjects. Use kind background. '
                  'NEVER combine separate clouds in one entry named clouds. Give each cloud its own tight bounding box '
                  'and position-specific name and prompt, such as cloud on the left or cloud on the right. '
                  'Describe sky as blue sky, excluding clouds; do not use a combined sky-with-clouds description. '
                  'Do not duplicate one region as both grass and hill. Order layers back to front, with sky first. '
                  'Do not invent elements absent from the image. Return an empty objects array if none are visible. ')
+    elif scene_scope == 'surface pass':
+        granularity = ''
+        scope = ('Inspect the entire image, especially its lower portion, for visible ground and structural surfaces. '
+                 'List ONLY grass, hills, ground, floors, walls, ceilings or water that are actually visible. '
+                 'Do NOT list sky, clouds, people or other foreground subjects. Use kind background. '
+                 'A green grassy hill is one surface, not separate overlapping grass and hill entries. '
+                 'Describe visible pixels only and use the enclosing box even when a subject interrupts the surface. '
+                 'Return an empty objects array if no such surfaces are visible. Do not invent absent surfaces. ')
     return (f'Inspect the actual image. {scope} {granularity} '
             f'List each visible instance separately. Include at most {max_objects} entries. '
             'Do not infer objects or surfaces outside the image. '
@@ -222,11 +234,16 @@ def run_vision(pil_image, model_dir, detail, max_objects, scene_scope='full scen
                 generated = inputs = None
                 try:
                     items = normalize_discovery(raw, pixel_size=pixel_size,
-                        include_background=scope in ('subjects pass', 'background pass'),
-                        allow_empty=scope in ('subjects pass', 'background pass'))
+                        include_background=scope in ('subjects pass', 'background pass', 'surface pass'),
+                        allow_empty=scope in ('subjects pass', 'background pass', 'surface pass'),
+                        kind_hint='object' if scope == 'subjects pass' else
+                            ('background' if scope in ('background pass', 'surface pass') else None))
                     if scope == 'background pass':
                         if any(re.search(r'\bclouds\b', item['name'], re.I) for item in items):
                             raise ValueError('Split clouds into individual entries with separate tight boxes, not one clouds entry.')
+                        for item in items:
+                            item['kind'] = 'background'
+                    elif scope == 'surface pass':
                         for item in items:
                             item['kind'] = 'background'
                     elif scope == 'subjects pass':
@@ -253,9 +270,11 @@ def run_vision(pil_image, model_dir, detail, max_objects, scene_scope='full scen
         subjects = discover('subjects pass', max_objects)
         remaining = max_objects - len(subjects)
         backgrounds = discover('background pass', remaining) if remaining else []
-        if not subjects and not backgrounds:
+        remaining -= len(backgrounds)
+        surfaces = discover('surface pass', remaining) if remaining else []
+        if not subjects and not backgrounds and not surfaces:
             raise ValueError('No visible scene layers found. Try foreground discovery or add objects manually.')
-        return backgrounds + subjects
+        return backgrounds + surfaces + subjects
     finally:
         # Do not retain a second GPU model while SAM3/reconstruction executes.
         del generated, inputs, model, processor

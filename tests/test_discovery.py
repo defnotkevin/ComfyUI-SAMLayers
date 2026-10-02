@@ -72,12 +72,13 @@ class DiscoveryTests(unittest.TestCase):
             fill.assert_not_called()
             self.assertTrue(torch.equal(result[1],image))
 
-    def test_full_scene_uses_two_passes_and_repairs_collective_clouds(self):
-        subject={'name':'person','bbox':[10,10,50,50],'kind':'object'}
+    def test_full_scene_checks_subjects_clouds_and_surfaces_and_repairs_collective_clouds(self):
+        subject={'name':'person','bbox':[10,10,50,50],'kind':'character'}
         collective={'name':'clouds','bbox':[0,0,56,10],'kind':'background'}
         left={'name':'cloud left','bbox':[0,0,20,10],'kind':'background'}
         right={'name':'cloud right','bbox':[35,0,56,10],'kind':'background'}
-        responses=iter([json.dumps([subject]),json.dumps([collective]),json.dumps([left,right])])
+        surface={'name':'grassy hill','bbox':[0,30,56,56],'kind':'terrain'}
+        responses=iter([json.dumps([subject]),json.dumps([collective]),json.dumps([left,right]),json.dumps([surface])])
         prompts=[];loads=[]
         mm=types.SimpleNamespace(unload_all_models=lambda:None,soft_empty_cache=lambda:None,
             get_torch_device=lambda:'cpu',throw_exception_if_processing_interrupted=lambda:None)
@@ -101,15 +102,27 @@ class DiscoveryTests(unittest.TestCase):
             with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm,
                 'transformers':types.SimpleNamespace(AutoProcessor=Processor,Qwen2_5_VLForConditionalGeneration=Model)}),patch('torch.cuda.is_available',return_value=True):
                 result=run_vision(Image.new('RGB',(56,56)),directory,'whole objects',24)
-        self.assertEqual([x['name'] for x in result],['cloud left','cloud right','person'])
+        self.assertEqual([x['name'] for x in result],['cloud left','cloud right','grassy hill','person'])
         self.assertTrue(all(x['enabled'] for x in result))
         self.assertEqual(len(loads),1)
         self.assertIn('ONLY foreground subjects',prompts[0])
-        self.assertIn('ONLY visible environmental layers',prompts[1])
+        self.assertIn('visible sky and each cloud separately',prompts[1])
+        self.assertIn('ground and structural surfaces',prompts[3])
 
     def test_empty_pass_does_not_relax_saved_review_parser(self):
         self.assertEqual(normalize_discovery('{"objects":[]}',allow_empty=True),[])
         with self.assertRaises(ValueError):parse_objects('{"objects":[]}')
+
+    def test_live_character_kind_alias_preserves_subject(self):
+        raw=json.dumps({'objects':[{'name':'character',
+            'prompt':'a character with large ears, blue eyes, and a pink dress',
+            'bbox':[108,39,630,756],'kind':'character'}]})
+        result=normalize_discovery(raw,pixel_size=(756,756),include_background=True)
+        self.assertEqual(result[0]['kind'],'object')
+        self.assertTrue(result[0]['enabled'])
+        self.assertEqual(result[0]['bbox'],[1000*v/756 for v in [108,39,630,756]])
+        with self.assertRaisesRegex(ValueError,'kind must be'):
+            parse_objects(raw)
 
     def test_click_preview_pauses_and_confirmed_mask_is_reused(self):
         class Blocker:
