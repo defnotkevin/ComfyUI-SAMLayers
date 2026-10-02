@@ -18,6 +18,22 @@ def objects():
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_qwen_foreground_kind_is_normalized_only_at_model_boundary(self):
+        raw = json.dumps({'objects': [
+            {'name': 'person', 'bbox': [180, 39, 595, 756], 'kind': 'foreground'},
+            {'name': 'clouds', 'bbox': [58, 32, 722, 150], 'kind': 'background'},
+        ]})
+        result = normalize_discovery(raw, pixel_size=(756, 756))
+        self.assertEqual(result[0]['kind'], 'object')
+        self.assertTrue(result[0]['enabled'])
+        self.assertEqual(result[0]['bbox'], [1000*x/756 for x in [180, 39, 595, 756]])
+        self.assertEqual(result[1]['kind'], 'background')
+        self.assertFalse(result[1]['enabled'])
+        with self.assertRaisesRegex(ValueError, 'kind must be'):
+            parse_objects(raw)
+        with self.assertRaisesRegex(ValueError, 'kind must be'):
+            normalize_discovery(raw.replace('foreground', 'unknown'))
+
     def test_click_preview_pauses_and_confirmed_mask_is_reused(self):
         class Blocker:
             def __init__(self,value):pass

@@ -108,6 +108,10 @@ def normalize_discovery(text, pixel_size=None):
             entry['prompt'] = name
         # Obvious surfaces remain opt-in when the model omits the kind field.
         entry.setdefault('kind', 'background' if name.lower() in ('wall','floor','ceiling','sky') else 'object')
+        # Qwen sometimes uses foreground for physical objects despite the schema.
+        # Normalize only model output; saved review state stays canonical.
+        if entry['kind'] == 'foreground':
+            entry['kind'] = 'object'
         normalized.append(entry)
     return parse_objects(json.dumps({'objects':normalized}))
 
