@@ -72,6 +72,45 @@ class DiscoveryTests(unittest.TestCase):
             fill.assert_not_called()
             self.assertTrue(torch.equal(result[1],image))
 
+    def test_full_scene_uses_two_passes_and_repairs_collective_clouds(self):
+        subject={'name':'person','bbox':[10,10,50,50],'kind':'object'}
+        collective={'name':'clouds','bbox':[0,0,56,10],'kind':'background'}
+        left={'name':'cloud left','bbox':[0,0,20,10],'kind':'background'}
+        right={'name':'cloud right','bbox':[35,0,56,10],'kind':'background'}
+        responses=iter([json.dumps([subject]),json.dumps([collective]),json.dumps([left,right])])
+        prompts=[];loads=[]
+        mm=types.SimpleNamespace(unload_all_models=lambda:None,soft_empty_cache=lambda:None,
+            get_torch_device=lambda:'cpu',throw_exception_if_processing_interrupted=lambda:None)
+        comfy=types.ModuleType('comfy');comfy.model_management=mm
+        class Inputs(dict):
+            def to(self,device):return self
+        class Processor:
+            @classmethod
+            def from_pretrained(cls,*a,**kw):return cls()
+            def apply_chat_template(self,messages,**kw):prompts.append(messages[0]['content'][1]['text']);return 'prompt'
+            def __call__(self,**kw):return Inputs(input_ids=torch.zeros(1,3,dtype=torch.long))
+            def batch_decode(self,*a,**kw):return [next(responses)]
+        class Model:
+            @classmethod
+            def from_pretrained(cls,*a,**kw):loads.append(1);return cls()
+            def to(self,*a):return self
+            def eval(self):return self
+            def generate(self,**kw):return torch.zeros(1,4,dtype=torch.long)
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory)/'config.json').write_text('{}')
+            with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm,
+                'transformers':types.SimpleNamespace(AutoProcessor=Processor,Qwen2_5_VLForConditionalGeneration=Model)}),patch('torch.cuda.is_available',return_value=True):
+                result=run_vision(Image.new('RGB',(56,56)),directory,'whole objects',24)
+        self.assertEqual([x['name'] for x in result],['cloud left','cloud right','person'])
+        self.assertTrue(all(x['enabled'] for x in result))
+        self.assertEqual(len(loads),1)
+        self.assertIn('ONLY foreground subjects',prompts[0])
+        self.assertIn('ONLY visible environmental layers',prompts[1])
+
+    def test_empty_pass_does_not_relax_saved_review_parser(self):
+        self.assertEqual(normalize_discovery('{"objects":[]}',allow_empty=True),[])
+        with self.assertRaises(ValueError):parse_objects('{"objects":[]}')
+
     def test_click_preview_pauses_and_confirmed_mask_is_reused(self):
         class Blocker:
             def __init__(self,value):pass

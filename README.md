@@ -426,3 +426,11 @@ Full-scene discovery does not yet provide independent clean-plate completion for
 every environmental layer. The reconstructed base can still contain environmental
 features when those layers are moved. Use the editing-only workflow for transparent
 cutouts; review generated fills before relying on hidden background content.
+
+Full-scene discovery uses two independent prompts with one Qwen model load:
+foreground subjects first, then environmental layers using the remaining layer
+budget. Results are merged with backgrounds behind subjects. A collective
+`clouds` entry triggers the bounded repair pass requesting individual cloud boxes.
+This avoids the observed single-pass result that omitted the person and grouped
+both clouds. Model accuracy still requires live review; the repair is not a
+guarantee that every visible instance will be found.

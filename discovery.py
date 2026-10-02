@@ -10,13 +10,13 @@ from pathlib import Path
 import torch
 
 
-def parse_objects(text):
+def parse_objects(text, allow_empty=False):
     text = text.strip()
     if text.startswith('```'):
         text = text.split('\n', 1)[1].rsplit('```', 1)[0].strip()
     data = json.loads(text)
     items = data.get('objects') if isinstance(data, dict) else data
-    if not isinstance(items, list) or not 1 <= len(items) <= 64:
+    if not isinstance(items, list) or not (0 if allow_empty else 1) <= len(items) <= 64:
         raise ValueError('Discovery must contain an objects list with 1–64 entries. Retry with fewer objects.')
     result = []
     for i, item in enumerate(items):
@@ -50,7 +50,7 @@ def parse_objects(text):
     return result
 
 
-def normalize_discovery(text, pixel_size=None, include_background=False):
+def normalize_discovery(text, pixel_size=None, include_background=False, allow_empty=False):
     """Accept common VLM field spellings at the model boundary only.
 
     Never invent names/boxes or guess a coordinate scale. Review state continues
@@ -115,7 +115,7 @@ def normalize_discovery(text, pixel_size=None, include_background=False):
         if include_background:
             entry['enabled'] = True
         normalized.append(entry)
-    return parse_objects(json.dumps({'objects':normalized}))
+    return parse_objects(json.dumps({'objects':normalized}), allow_empty=allow_empty)
 
 
 def save_discovery_failure(attempts):
@@ -158,6 +158,19 @@ def discovery_prompt(detail, max_objects, pixel_size=None, scene_scope='full sce
         'Describe only visible pixels; do not complete hidden areas. Reserve entries for visible background regions within the limit. '
         if scene_scope == 'full scene' else
         'Identify visible foreground objects first. Background surfaces may be listed afterward for optional selection. ')
+    if scene_scope == 'subjects pass':
+        scope = ('List ONLY foreground subjects such as people, characters, animals and movable objects. '
+                 'Do not list sky, clouds, grass, hills, walls or other environmental surfaces in this pass. '
+                 'Use kind object. Return an empty objects array if there are no visible foreground subjects. ')
+    elif scene_scope == 'background pass':
+        granularity = ''
+        scope = ('List ONLY visible environmental layers: sky, terrain, grass, water, walls, floors, and each cloud separately. '
+                 'Do not list people, characters or foreground subjects. Use kind background. '
+                 'NEVER combine separate clouds in one entry named clouds. Give each cloud its own tight bounding box '
+                 'and position-specific name and prompt, such as cloud on the left or cloud on the right. '
+                 'Describe sky as blue sky, excluding clouds; do not use a combined sky-with-clouds description. '
+                 'Do not duplicate one region as both grass and hill. Order layers back to front, with sky first. '
+                 'Do not invent elements absent from the image. Return an empty objects array if none are visible. ')
     return (f'Inspect the actual image. {scope} {granularity} '
             f'List each visible instance separately. Include at most {max_objects} entries. '
             'Do not infer objects or surfaces outside the image. '
@@ -191,38 +204,58 @@ def run_vision(pil_image, model_dir, detail, max_objects, scene_scope='full scen
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(str(model_dir),
                     local_files_only=True, trust_remote_code=False, torch_dtype=torch.float16,
                     attn_implementation='sdpa').to(device).eval()
-        messages = [{'role':'user','content':[{'type':'image'},
-                    {'type':'text','text':discovery_prompt(detail,max_objects,pixel_size,scene_scope)}]}]
-        attempts = []
-        for attempt in range(2):
-            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = processor(text=[text], images=[pil_image], padding=True, return_tensors='pt', do_resize=False).to(device)
-            mm.throw_exception_if_processing_interrupted()
-            with torch.inference_mode():
-                generated = model.generate(**inputs, max_new_tokens=4096, do_sample=False)
-            mm.throw_exception_if_processing_interrupted()
-            raw = processor.batch_decode(generated[:,inputs['input_ids'].shape[1]:],
-                        skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-            # Free the previous generation tensors before a repair pass.
-            generated = inputs = None
-            try:
-                return normalize_discovery(raw, pixel_size=pixel_size, include_background=scene_scope == 'full scene')[:max_objects]
-            except (ValueError, TypeError, KeyError) as exc:
-                attempts.append({'response':raw,'error':str(exc),'coordinate_space':'pixels','image_size':list(pixel_size)})
-                if attempt == 0:
-                    logging.getLogger(__name__).warning('SAMLayers discovery format invalid (%s); retrying once with schema reminder.', exc)
-                    messages += [{'role':'assistant','content':raw},
-                        {'role':'user','content':[{'type':'text','text':
-                            'Correct the previous response using the original image. Return ONLY an objects JSON array inside '
-                            '{"objects": [...]}. Every entry MUST have a nonempty string name, short string prompt, '
-                            f'bbox [left,top,right,bottom] in absolute pixels within {pixel_size[0]} x {pixel_size[1]}, '
-                            'and kind object or background. Preserve the requested scene scope and layer order. '
-                            f'Use at most {max_objects} entries. Do not invent names for unseen objects. '
-                            f'Validation error: {exc}'}]}]
-        diagnostic = save_discovery_failure(attempts)
-        location = f' Raw responses saved to {diagnostic}.' if diagnostic else ' Could not save a diagnostic file.'
-        raise ValueError('Vision discovery format was invalid after one repair attempt. '
-                         + attempts[-1]['error'] + location)
+        def discover(scope, limit):
+            nonlocal inputs, generated
+            messages = [{'role':'user','content':[{'type':'image'},
+                        {'type':'text','text':discovery_prompt(detail,limit,pixel_size,scope)}]}]
+            attempts = []
+            for attempt in range(2):
+                text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                inputs = processor(text=[text], images=[pil_image], padding=True, return_tensors='pt', do_resize=False).to(device)
+                mm.throw_exception_if_processing_interrupted()
+                with torch.inference_mode():
+                    generated = model.generate(**inputs, max_new_tokens=4096, do_sample=False)
+                mm.throw_exception_if_processing_interrupted()
+                raw = processor.batch_decode(generated[:,inputs['input_ids'].shape[1]:],
+                            skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+                # Free the previous generation tensors before a repair pass.
+                generated = inputs = None
+                try:
+                    items = normalize_discovery(raw, pixel_size=pixel_size,
+                        include_background=scope in ('subjects pass', 'background pass'),
+                        allow_empty=scope in ('subjects pass', 'background pass'))
+                    if scope == 'background pass':
+                        if any(re.search(r'\bclouds\b', item['name'], re.I) for item in items):
+                            raise ValueError('Split clouds into individual entries with separate tight boxes, not one clouds entry.')
+                        for item in items:
+                            item['kind'] = 'background'
+                    elif scope == 'subjects pass':
+                        items = [item for item in items if item['kind'] == 'object']
+                    return items[:limit]
+                except (ValueError, TypeError, KeyError) as exc:
+                    attempts.append({'response':raw,'error':str(exc),'coordinate_space':'pixels','image_size':list(pixel_size)})
+                    if attempt == 0:
+                        logging.getLogger(__name__).warning('SAMLayers discovery format invalid (%s); retrying once with schema reminder.', exc)
+                        messages += [{'role':'assistant','content':raw},
+                            {'role':'user','content':[{'type':'text','text':
+                                'Correct the previous response using the original image. Return ONLY an objects JSON array inside '
+                                '{"objects": [...]}. Every entry MUST have a nonempty string name, short string prompt, '
+                                f'bbox [left,top,right,bottom] in absolute pixels within {pixel_size[0]} x {pixel_size[1]}, '
+                                'and kind object or background. Preserve the requested scene scope and layer order. '
+                                f'Use at most {limit} entries. Do not invent names for unseen objects. '
+                                f'Validation error: {exc}'}]}]
+            diagnostic = save_discovery_failure(attempts)
+            location = f' Raw responses saved to {diagnostic}.' if diagnostic else ' Could not save a diagnostic file.'
+            raise ValueError('Vision discovery format was invalid after one repair attempt. '
+                             + attempts[-1]['error'] + location)
+        if scene_scope != 'full scene':
+            return discover(scene_scope, max_objects)
+        subjects = discover('subjects pass', max_objects)
+        remaining = max_objects - len(subjects)
+        backgrounds = discover('background pass', remaining) if remaining else []
+        if not subjects and not backgrounds:
+            raise ValueError('No visible scene layers found. Try foreground discovery or add objects manually.')
+        return backgrounds + subjects
     finally:
         # Do not retain a second GPU model while SAM3/reconstruction executes.
         del generated, inputs, model, processor
