@@ -188,20 +188,33 @@ class LayersTests(unittest.TestCase):
         seen={}
         class Clip:
             def tokenize(self,s):return s
-            def encode_from_tokens_scheduled(self,s):return s
+            def encode_from_tokens_scheduled(self,s,**kwargs):
+                seen.setdefault('encoded',[]).append((s,kwargs));return s
         class Conditioning:
             def encode(self,**kwargs):seen.update(kwargs);return ('p','n',{})
         class Sampler:
-            def sample(self,*args,**kwargs):return ({},)
+            def sample(self,*args,**kwargs):seen['sampler']=args;return ({},)
         class Decode:
-            def decode(self,*args):return (torch.ones(1,16,24,3),)
+            def decode(self,*args):return (torch.ones(1,16,32,3),)
         fake=types.SimpleNamespace(InpaintModelConditioning=Conditioning,KSampler=Sampler,VAEDecode=Decode)
         with patch.dict(sys.modules,{'nodes':fake}):
-            out=nodes.inpaint(image,mask,object(),Clip(),types.SimpleNamespace(downscale_ratio=8),'p','n',0,2,6)
-        self.assertEqual(tuple(seen['pixels'].shape),(1,16,24,3))
+            model=types.SimpleNamespace(model=types.SimpleNamespace(model_config=types.SimpleNamespace(unet_config={'image_model':'flux','in_channels':96})))
+            out=nodes.inpaint(image,mask,model,Clip(),types.SimpleNamespace(downscale_ratio=8),'p','n',0,2,6)
+        self.assertEqual(tuple(seen['pixels'].shape),(1,16,32,3))
+        self.assertEqual(seen['sampler'][3],1.0)
+        self.assertFalse(seen['noise_mask'])
+        self.assertEqual(seen['encoded'][0][1],{'add_dict':{'guidance':6}})
+        self.assertIn('Exclude the following',seen['encoded'][0][0])
+        self.assertEqual(seen['encoded'][1][0],'')
         self.assertEqual(tuple(out.shape),tuple(image.shape))
         self.assertTrue(torch.equal(out[mask==0],image[mask==0]))
         self.assertTrue(torch.all(out[mask==1]==1))
+
+    def test_inpaint_rejects_sd_and_non_fill_flux(self):
+        for config in ({}, {'image_model':'flux','in_channels':16}, {'image_model':'sd15','in_channels':96}):
+            model=types.SimpleNamespace(model=types.SimpleNamespace(model_config=types.SimpleNamespace(unet_config=config)))
+            with self.assertRaisesRegex(ValueError,'FLUX.1 Fill'):
+                nodes.validate_flux_fill(model)
 
     def test_hidden_completion_resegments_and_preserves_visible(self):
         p=self.project();p['state']['layers'][0]['completion']=nodes.data_url(Image.new('L',(24,16),255))

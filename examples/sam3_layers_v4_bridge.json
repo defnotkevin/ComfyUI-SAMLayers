@@ -1,5 +1,5 @@
 {
-  "last_node_id": 20,
+  "last_node_id": 22,
   "last_link_id": 23,
   "nodes": [
     {
@@ -182,8 +182,8 @@
     },
     {
       "id": 5,
-      "type": "CheckpointLoaderSimple",
-      "title": "Choose your SD/SDXL inpainting checkpoint",
+      "type": "UNETLoader",
+      "title": "FLUX.1 Fill dev",
       "pos": [
         800,
         400
@@ -203,14 +203,68 @@
           "links": [
             7
           ]
-        },
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "flux1-fill-dev.safetensors",
+        "fp8_e4m3fn"
+      ]
+    },
+    {
+      "id": 6,
+      "type": "DualCLIPLoader",
+      "title": "FLUX text encoders",
+      "pos": [
+        800,
+        670
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
         {
           "name": "CLIP",
           "type": "CLIP",
           "links": [
             8
           ]
-        },
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "DualCLIPLoader"
+      },
+      "widgets_values": [
+        "clip_l.safetensors",
+        "t5xxl_fp8_e4m3fn_scaled.safetensors",
+        "flux",
+        "default"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "VAELoader",
+      "title": "FLUX VAE",
+      "pos": [
+        800,
+        940
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
         {
           "name": "VAE",
           "type": "VAE",
@@ -220,14 +274,14 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "CheckpointLoaderSimple"
+        "Node name for S&R": "VAELoader"
       },
       "widgets_values": [
-        "SELECT_YOUR_INPAINT_CHECKPOINT.safetensors"
+        "ae.safetensors"
       ]
     },
     {
-      "id": 6,
+      "id": 8,
       "type": "LayersReconstruct",
       "title": "3 \u2022 Reconstruct background and hidden parts",
       "pos": [
@@ -239,7 +293,7 @@
         240
       ],
       "flags": {},
-      "order": 5,
+      "order": 7,
       "mode": 0,
       "inputs": [
         {
@@ -300,11 +354,16 @@
         0,
         "fixed",
         25,
-        6
+        1,
+        12,
+        4,
+        "foreground removal",
+        30,
+        "Match the visible source image style, colors, lighting and texture. Preserve its level of detail."
       ]
     },
     {
-      "id": 7,
+      "id": 9,
       "type": "LayersMatte",
       "title": "Alpha matting and edge-color cleanup",
       "pos": [
@@ -316,7 +375,7 @@
         240
       ],
       "flags": {},
-      "order": 6,
+      "order": 8,
       "mode": 0,
       "inputs": [
         {
@@ -350,7 +409,7 @@
       ]
     },
     {
-      "id": 8,
+      "id": 10,
       "type": "LayersEditor",
       "title": "4 \u2022 Arrange reconstructed layers",
       "pos": [
@@ -362,7 +421,7 @@
         240
       ],
       "flags": {},
-      "order": 7,
+      "order": 9,
       "mode": 0,
       "inputs": [
         {
@@ -396,7 +455,7 @@
       ]
     },
     {
-      "id": 9,
+      "id": 11,
       "type": "LayersComposite",
       "title": "Render composition",
       "pos": [
@@ -408,7 +467,7 @@
         240
       ],
       "flags": {},
-      "order": 8,
+      "order": 10,
       "mode": 0,
       "inputs": [
         {
@@ -442,7 +501,7 @@
       "widgets_values": []
     },
     {
-      "id": 10,
+      "id": 12,
       "type": "PreviewImage",
       "title": "Composite preview",
       "pos": [
@@ -454,7 +513,7 @@
         240
       ],
       "flags": {},
-      "order": 9,
+      "order": 11,
       "mode": 0,
       "inputs": [
         {
@@ -470,7 +529,7 @@
       "widgets_values": []
     },
     {
-      "id": 11,
+      "id": 13,
       "type": "LayersSave",
       "title": "Save editable project + PNG layers",
       "pos": [
@@ -482,7 +541,7 @@
         240
       ],
       "flags": {},
-      "order": 10,
+      "order": 12,
       "mode": 0,
       "inputs": [
         {
@@ -506,7 +565,7 @@
       ]
     },
     {
-      "id": 12,
+      "id": 14,
       "type": "MarkdownNote",
       "title": "Two editing stages",
       "pos": [
@@ -518,7 +577,7 @@
         240
       ],
       "flags": {},
-      "order": 11,
+      "order": 13,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -526,11 +585,11 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "Set the inpainting checkpoint and background prompt before running. First editor: masks, completion regions, depth order. Second editor: arrange cached reconstructed layers. Change masks in the FIRST editor to regenerate hidden content. Then open the second editor again. Each editor pauses on new source data."
+        "Set the FLUX Fill loaders, background prompt and style_prompt before running. First editor: masks, completion regions, depth order. Second editor: arrange cached reconstructed layers. Change masks in the FIRST editor to regenerate hidden content. Then open the second editor again. Each editor pauses on new source data."
       ]
     },
     {
-      "id": 13,
+      "id": 15,
       "type": "CompositorConfig4",
       "title": "Optional \u2022 Existing Compositor V4 bridge",
       "pos": [
@@ -542,7 +601,7 @@
         240
       ],
       "flags": {},
-      "order": 12,
+      "order": 14,
       "mode": 0,
       "inputs": [
         {
@@ -650,7 +709,7 @@
       ]
     },
     {
-      "id": 14,
+      "id": 16,
       "type": "LayersGetLayer",
       "title": "Object 1 \u2192 V4",
       "pos": [
@@ -662,7 +721,7 @@
         240
       ],
       "flags": {},
-      "order": 13,
+      "order": 15,
       "mode": 0,
       "inputs": [
         {
@@ -699,7 +758,7 @@
       ]
     },
     {
-      "id": 15,
+      "id": 17,
       "type": "LayersGetLayer",
       "title": "Object 2 \u2192 V4",
       "pos": [
@@ -711,7 +770,7 @@
         240
       ],
       "flags": {},
-      "order": 14,
+      "order": 16,
       "mode": 0,
       "inputs": [
         {
@@ -748,7 +807,7 @@
       ]
     },
     {
-      "id": 16,
+      "id": 18,
       "type": "Compositor4",
       "title": "Existing Compositor V4",
       "pos": [
@@ -760,7 +819,7 @@
         240
       ],
       "flags": {},
-      "order": 15,
+      "order": 17,
       "mode": 0,
       "inputs": [
         {
@@ -797,7 +856,7 @@
       ]
     },
     {
-      "id": 17,
+      "id": 19,
       "type": "MarkdownNote",
       "title": "V4 bridge settings",
       "pos": [
@@ -809,7 +868,7 @@
         240
       ],
       "flags": {},
-      "order": 16,
+      "order": 18,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -821,7 +880,7 @@
       ]
     },
     {
-      "id": 18,
+      "id": 20,
       "type": "MarkdownNote",
       "title": "Requirements - ComfyUI and node packs",
       "pos": [
@@ -833,7 +892,7 @@
         1150
       ],
       "flags": {},
-      "order": 17,
+      "order": 19,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -847,7 +906,7 @@
       "bgcolor": "#172330"
     },
     {
-      "id": 19,
+      "id": 21,
       "type": "MarkdownNote",
       "title": "Requirements - Models and full download URLs",
       "pos": [
@@ -859,7 +918,7 @@
         1450
       ],
       "flags": {},
-      "order": 18,
+      "order": 20,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -867,13 +926,13 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# Requirements: model files\n\n## SAM3.1 \u2014 required\n\nFile: `sam3.1_multiplex_fp16.safetensors`\n\nPlace it in `ComfyUI/models/checkpoints/` and select it in the **SAM3.1 checkpoint** loader. That loader supplies SAM3's MODEL and CLIP outputs; no separate text-encoder or VAE file is required for segmentation.\n\nModel page:\n\nhttps://huggingface.co/Comfy-Org/sam3.1\n\nDirect checkpoint download:\n\nhttps://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors\n\n## Inpainting checkpoint \u2014 also required\n\nChoose a compatible **single-file SD/SDXL checkpoint with matching CLIP and VAE**, preferably an inpainting checkpoint. Place it in `ComfyUI/models/checkpoints/`.\n\nThe **Choose your SD/SDXL inpainting checkpoint** loader contains `SELECT_YOUR_INPAINT_CHECKPOINT.safetensors`. This is a placeholder, not a downloadable filename. Replace it with your installed checkpoint before running. Connect all three outputs from that same loader: MODEL, CLIP and VAE.\n\n### Concrete download option: SD 1.5 Inpainting\n\nFile: `sd-v1-5-inpainting.ckpt`\n\nModel page:\n\nhttps://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting\n\nDirect single-file checkpoint download:\n\nhttps://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt\n\nSelect this `.ckpt` file in the reconstruction loader if using this option. The repository's separate Diffusers component folders are not needed for this loader. This is an example option, not a GPU-tested model recommendation for this package.\n\nQwen Image Layered is not required and is not a drop-in inpainting checkpoint for this node. A standalone UNet file alone is insufficient for the example's checkpoint loader.\n"
+        "# Requirements: model files\n\n## SAM3.1 \u2014 required\n\nFile: `sam3.1_multiplex_fp16.safetensors`\n\nPlace it in `ComfyUI/models/checkpoints/` and select it in the **SAM3.1 checkpoint** loader. That loader supplies SAM3's MODEL and CLIP outputs; no separate text-encoder or VAE file is required for segmentation.\n\nModel page:\n\nhttps://huggingface.co/Comfy-Org/sam3.1\n\nDirect checkpoint download:\n\nhttps://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors\n\n## FLUX.1 Fill dev \u2014 required for every inpainting pass\n\nUse UNETLoader with `models/diffusion_models/flux1-fill-dev.safetensors`\n(weight_dtype `fp8_e4m3fn` on the tested 24 GB RunPod allocation).\nUse DualCLIPLoader with `clip_l.safetensors` and\n`t5xxl_fp8_e4m3fn_scaled.safetensors` in `models/text_encoders/`, type `flux`,\ndevice `default`. Use VAELoader with `models/vae/ae.safetensors`.\n\nFLUX Fill model: https://huggingface.co/black-forest-labs/FLUX.1-Fill-dev\nText encoders: https://huggingface.co/comfyanonymous/flux_text_encoders\nVAE: https://huggingface.co/black-forest-labs/FLUX.1-schnell/blob/main/ae.safetensors\n\nThe node uses FLUX guidance 30 and sampler CFG 1. Ordinary FLUX dev, SD 1.5,\nSDXL, and Qwen layered checkpoints are not supported for reconstruction.\nModel access/downloads must be completed separately; nothing downloads automatically.\nFor scene completion, use independent scene layers with complete_hidden enabled\nand a background surface at the back. Set style_prompt to match your actual image.\nGPU quality validation of the integrated FLUX reconstruction remains pending.\n\n"
       ],
       "color": "#243447",
       "bgcolor": "#172330"
     },
     {
-      "id": 20,
+      "id": 22,
       "type": "MarkdownNote",
       "title": "Installation - ComfyUI directory layout",
       "pos": [
@@ -885,7 +944,7 @@
         1100
       ],
       "flags": {},
-      "order": 19,
+      "order": 21,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -893,7 +952,7 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# File placement on the ComfyUI server\n\nUse your actual ComfyUI installation directory as the root below. RunPod template paths vary; do not assume a fixed `/workspace` path.\n\n```text\nComfyUI/\n|-- models/\n|   `-- checkpoints/\n|       |-- sam3.1_multiplex_fp16.safetensors\n|       `-- sd-v1-5-inpainting.ckpt  (or your chosen checkpoint)\n|-- custom_nodes/\n|   |-- ComfyUI-SAMLayers/\n|   |   |-- __init__.py\n|   |   |-- nodes.py\n|   |   |-- web/\n|   |   `-- examples/\n|   `-- ComfyUI-enricos-nodes/\n|-- input/\n|   `-- your_source_image.png\n`-- output/\n    `-- layers_<unique_id>/        (created when saving)\n        |-- composite.png\n        |-- layer_00.png\n        |-- rgb_00.png\n        |-- source.png\n        `-- project.json\n```\n\nUpload the source image using **LoadImage**, or place it in `input/` and select it. Example workflows live in the pack's `examples/` directory; open or drag the JSON file into ComfyUI.\n\nKeep `__init__.py` directly inside the custom node pack directory, not inside an extra nested folder from extracting a ZIP. Keep the entire pack together, including its `web/` directory.\n\nThe `output/` directory is generated output, not a model installation location. The save node writes additional per-layer files; reconstruction projects also include `background.png`.\n\n## V4 setup after loading\n\nSet **CompositorConfig4** width and height to the source image dimensions. The background uses image1; RGBA objects use image2 and image3. Leave mask inputs disconnected because transparency is already embedded in RGBA. Add Get Layer nodes for more objects (eight V4 slots total, including the background).\n"
+        "# File placement on the ComfyUI server\n\nUse your actual ComfyUI installation directory as the root below. RunPod template paths vary; do not assume a fixed `/workspace` path.\n\n```text\nComfyUI/\n|-- models/\n|   `-- checkpoints/\n|       `-- sam3.1_multiplex_fp16.safetensors\n|   |-- diffusion_models/flux1-fill-dev.safetensors\n|   |-- text_encoders/clip_l.safetensors\n|   |-- text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors\n|   `-- vae/ae.safetensors\n|-- custom_nodes/\n|   |-- ComfyUI-SAMLayers/\n|   |   |-- __init__.py\n|   |   |-- nodes.py\n|   |   |-- web/\n|   |   `-- examples/\n|   `-- ComfyUI-enricos-nodes/\n|-- input/\n|   `-- your_source_image.png\n`-- output/\n    `-- layers_<unique_id>/        (created when saving)\n        |-- composite.png\n        |-- layer_00.png\n        |-- rgb_00.png\n        |-- source.png\n        `-- project.json\n```\n\nUpload the source image using **LoadImage**, or place it in `input/` and select it. Example workflows live in the pack's `examples/` directory; open or drag the JSON file into ComfyUI.\n\nKeep `__init__.py` directly inside the custom node pack directory, not inside an extra nested folder from extracting a ZIP. Keep the entire pack together, including its `web/` directory.\n\nThe `output/` directory is generated output, not a model installation location. The save node writes additional per-layer files; reconstruction projects also include `background.png`.\n\n## V4 setup after loading\n\nSet **CompositorConfig4** width and height to the source image dimensions. The background uses image1; RGBA objects use image2 and image3. Leave mask inputs disconnected because transparency is already embedded in RGBA. Add Get Layer nodes for more objects (eight V4 slots total, including the background).\n"
       ],
       "color": "#243447",
       "bgcolor": "#172330"
@@ -944,7 +1003,7 @@
       6,
       4,
       0,
-      6,
+      8,
       0,
       "LAYERS_PROJECT"
     ],
@@ -952,23 +1011,23 @@
       7,
       5,
       0,
-      6,
+      8,
       1,
       "MODEL"
     ],
     [
       8,
-      5,
-      1,
       6,
+      0,
+      8,
       2,
       "CLIP"
     ],
     [
       9,
-      5,
-      2,
-      6,
+      7,
+      0,
+      8,
       3,
       "VAE"
     ],
@@ -976,7 +1035,7 @@
       10,
       2,
       0,
-      6,
+      8,
       4,
       "MODEL"
     ],
@@ -984,23 +1043,23 @@
       11,
       2,
       1,
-      6,
+      8,
       5,
       "CLIP"
     ],
     [
       12,
-      6,
+      8,
       0,
-      7,
+      9,
       0,
       "LAYERS_PROJECT"
     ],
     [
       13,
-      7,
+      9,
       0,
-      8,
+      10,
       0,
       "LAYERS_PROJECT"
     ],
@@ -1008,79 +1067,79 @@
       14,
       2,
       0,
-      8,
+      10,
       1,
       "MODEL"
     ],
     [
       15,
-      8,
-      0,
-      9,
-      0,
-      "LAYERS_PROJECT"
-    ],
-    [
-      16,
-      9,
-      0,
       10,
-      0,
-      "IMAGE"
-    ],
-    [
-      17,
-      8,
       0,
       11,
       0,
       "LAYERS_PROJECT"
     ],
     [
-      18,
-      6,
-      1,
+      16,
+      11,
+      0,
+      12,
+      0,
+      "IMAGE"
+    ],
+    [
+      17,
+      10,
+      0,
       13,
+      0,
+      "LAYERS_PROJECT"
+    ],
+    [
+      18,
+      8,
+      1,
+      15,
       0,
       "IMAGE"
     ],
     [
       19,
-      8,
+      10,
       0,
-      14,
+      16,
       0,
       "LAYERS_PROJECT"
     ],
     [
       20,
-      14,
+      16,
       0,
-      13,
+      15,
       2,
       "IMAGE"
     ],
     [
       21,
-      8,
+      10,
       0,
-      15,
+      17,
       0,
       "LAYERS_PROJECT"
     ],
     [
       22,
-      15,
+      17,
       0,
-      13,
+      15,
       4,
       "IMAGE"
     ],
     [
       23,
-      13,
+      15,
       0,
-      16,
+      18,
       0,
       "COMPOSITOR_CONFIG"
     ]

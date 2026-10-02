@@ -70,38 +70,36 @@ https://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiple
 """
     if reconstruct:
         models += """
-## Inpainting checkpoint — also required
+## FLUX.1 Fill dev — required for every inpainting pass
 
-Choose a compatible **single-file SD/SDXL checkpoint with matching CLIP and VAE**, preferably an inpainting checkpoint. Place it in `ComfyUI/models/checkpoints/`.
+Use UNETLoader with `models/diffusion_models/flux1-fill-dev.safetensors`
+(weight_dtype `fp8_e4m3fn` on the tested 24 GB RunPod allocation).
+Use DualCLIPLoader with `clip_l.safetensors` and
+`t5xxl_fp8_e4m3fn_scaled.safetensors` in `models/text_encoders/`, type `flux`,
+device `default`. Use VAELoader with `models/vae/ae.safetensors`.
 
-The **Choose your SD/SDXL inpainting checkpoint** loader contains `SELECT_YOUR_INPAINT_CHECKPOINT.safetensors`. This is a placeholder, not a downloadable filename. Replace it with your installed checkpoint before running. Connect all three outputs from that same loader: MODEL, CLIP and VAE.
+FLUX Fill model: https://huggingface.co/black-forest-labs/FLUX.1-Fill-dev
+Text encoders: https://huggingface.co/comfyanonymous/flux_text_encoders
+VAE: https://huggingface.co/black-forest-labs/FLUX.1-schnell/blob/main/ae.safetensors
 
-### Concrete download option: SD 1.5 Inpainting
+The node uses FLUX guidance 30 and sampler CFG 1. Ordinary FLUX dev, SD 1.5,
+SDXL, and Qwen layered checkpoints are not supported for reconstruction.
+Model access/downloads must be completed separately; nothing downloads automatically.
+For scene completion, use independent scene layers with complete_hidden enabled
+and a background surface at the back. Set style_prompt to match your actual image.
+GPU quality validation of the integrated FLUX reconstruction remains pending.
 
-File: `sd-v1-5-inpainting.ckpt`
-
-Model page:
-
-https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting
-
-Direct single-file checkpoint download:
-
-https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt
-
-Select this `.ckpt` file in the reconstruction loader if using this option. The repository's separate Diffusers component folders are not needed for this loader. This is an example option, not a GPU-tested model recommendation for this package.
-
-Qwen Image Layered is not required and is not a drop-in inpainting checkpoint for this node. A standalone UNet file alone is insufficient for the example's checkpoint loader.
 """
     else:
         models += """
 ## No reconstruction model needed
 
-This workflow extracts and edits transparent cutouts only. It does not fill the background or reconstruct hidden object parts. No SD/SDXL inpainting model or Qwen Image Layered model is required.
+This workflow extracts and edits transparent cutouts only. It does not fill the background or reconstruct hidden object parts. No FLUX Fill model is required.
 """
 
     checkpoint_line = "|       `-- sam3.1_multiplex_fp16.safetensors"
     if reconstruct:
-        checkpoint_line = "|       |-- sam3.1_multiplex_fp16.safetensors\n|       `-- sd-v1-5-inpainting.ckpt  (or your chosen checkpoint)"
+        checkpoint_line = "|       `-- sam3.1_multiplex_fp16.safetensors\n|   |-- diffusion_models/flux1-fill-dev.safetensors\n|   |-- text_encoders/clip_l.safetensors\n|   |-- text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors\n|   `-- vae/ae.safetensors"
     pack_lines = "|   `-- ComfyUI-SAMLayers/\n|       |-- __init__.py\n|       |-- nodes.py\n|       |-- web/\n|       `-- examples/"
     if v4:
         pack_lines = "|   |-- ComfyUI-SAMLayers/\n|   |   |-- __init__.py\n|   |   |-- nodes.py\n|   |   |-- web/\n|   |   `-- examples/\n|   `-- ComfyUI-enricos-nodes/"
@@ -216,6 +214,13 @@ class Workflow:
         data={'last_node_id':len(nodes),'last_link_id':len(self.links),'nodes':nodes,'links':self.links,'groups':groups, 'config':{},'extra':{},'version':.4}
         (ROOT/name).write_text(json.dumps(data,indent=2))
 
+def flux_loaders(w, x, y):
+    model=w.node('UNETLoader','FLUX.1 Fill dev',[x,y],[],[('MODEL','MODEL')],['flux1-fill-dev.safetensors','fp8_e4m3fn'])
+    clip=w.node('DualCLIPLoader','FLUX text encoders',[x,y+270],[],[('CLIP','CLIP')],['clip_l.safetensors','t5xxl_fp8_e4m3fn_scaled.safetensors','flux','default'])
+    vae=w.node('VAELoader','FLUX VAE',[x,y+540],[],[('VAE','VAE')],['ae.safetensors'])
+    return model,clip,vae
+
+
 def base():
     w=Workflow()
     image=w.node('LoadImage','Source image',[0,0],[],[('IMAGE','IMAGE'),('MASK','MASK')],['example.png','image'])
@@ -247,15 +252,15 @@ w.save('sam3_layers_edit.json')
 w.save_automatic('sam3_layers_auto_edit.json')
 
 w,sam,edit=base()
-model=w.node('CheckpointLoaderSimple','Choose your SD/SDXL inpainting checkpoint',[800,400],[],[('MODEL','MODEL'),('CLIP','CLIP'),('VAE','VAE')],['SELECT_YOUR_INPAINT_CHECKPOINT.safetensors'])
-rebuild=w.node('LayersReconstruct','3 • Reconstruct background and hidden parts',[1200,0],[(n,t)for n,t in [('project','LAYERS_PROJECT'),('model','MODEL'),('clip','CLIP'),('vae','VAE'),('sam_model','MODEL'),('sam_clip','CLIP')]],[('project','LAYERS_PROJECT'),('background','IMAGE')],['empty room, continuous background, no people, no foreground objects','artifacts, duplicated objects, text, watermark',True,32,0,'fixed',25,6])
+model,flux_clip,flux_vae=flux_loaders(w,800,400)
+rebuild=w.node('LayersReconstruct','3 • Reconstruct background and hidden parts',[1200,0],[(n,t)for n,t in [('project','LAYERS_PROJECT'),('model','MODEL'),('clip','CLIP'),('vae','VAE'),('sam_model','MODEL'),('sam_clip','CLIP')]],[('project','LAYERS_PROJECT'),('background','IMAGE')],['empty room, continuous background, no people, no foreground objects','artifacts, duplicated objects, text, watermark',True,32,0,'fixed',25,1,12,4,'foreground removal',30,'Match the visible source image style, colors, lighting and texture. Preserve its level of detail.'])
 w.link(edit,0,rebuild,0)
-for i in range(3):w.link(model,i,rebuild,i+1)
+for i,loader in enumerate((model,flux_clip,flux_vae)):w.link(loader,0,rebuild,i+1)
 w.link(sam,0,rebuild,4);w.link(sam,1,rebuild,5)
 refined=matte(w,rebuild,1550,-350)
 arrange=w.node('LayersEditor','4 • Arrange reconstructed layers',[1950,0],[('project','LAYERS_PROJECT'),('sam_model','MODEL')],[('project','LAYERS_PROJECT')],[''])
 w.link(refined,0,arrange,0);w.link(sam,0,arrange,1);finish(w,arrange,2350,refine=False)
-w.node('Note','Two editing stages',[1200,450],[],[],['Set the inpainting checkpoint and background prompt before running. First editor: masks, completion regions, depth order. Second editor: arrange cached reconstructed layers. Change masks in the FIRST editor to regenerate hidden content. Then open the second editor again. Each editor pauses on new source data.'])
+w.node('Note','Two editing stages',[1200,450],[],[],['Set the FLUX Fill loaders, background prompt and style_prompt before running. First editor: masks, completion regions, depth order. Second editor: arrange cached reconstructed layers. Change masks in the FIRST editor to regenerate hidden content. Then open the second editor again. Each editor pauses on new source data.'])
 w.save('sam3_layers_reconstruct.json')
 w.save_automatic('sam3_layers_auto_reconstruct.json')
 
@@ -336,10 +341,10 @@ Run once, open Review object list, correct names/boxes and check the objects wan
 w,sam,edit=semantic_base();finish(w,edit,2000)
 w.save('sam3_layers_vision_edit.json')
 w,sam,edit=semantic_base()
-model=w.node('CheckpointLoaderSimple','Choose your SD/SDXL inpainting checkpoint',[1600,400],[],[('MODEL','MODEL'),('CLIP','CLIP'),('VAE','VAE')],['SELECT_YOUR_INPAINT_CHECKPOINT.safetensors'])
-rebuild=w.node('LayersReconstruct','5 • Reconstruct background and hidden parts',[2000,0],[('project','LAYERS_PROJECT'),('model','MODEL'),('clip','CLIP'),('vae','VAE'),('sam_model','MODEL'),('sam_clip','CLIP')],[('project','LAYERS_PROJECT'),('background','IMAGE')],['empty room, continuous background, no people, no foreground objects','artifacts, duplicated objects, text, watermark',True,32,0,'fixed',25,6])
+model,flux_clip,flux_vae=flux_loaders(w,1600,400)
+rebuild=w.node('LayersReconstruct','5 • Reconstruct background and hidden parts',[2000,0],[('project','LAYERS_PROJECT'),('model','MODEL'),('clip','CLIP'),('vae','VAE'),('sam_model','MODEL'),('sam_clip','CLIP')],[('project','LAYERS_PROJECT'),('background','IMAGE')],['empty room, continuous background, no people, no foreground objects','artifacts, duplicated objects, text, watermark',True,32,0,'fixed',25,1,12,4,'independent scene layers',30,'Match the visible source image style, colors, lighting and texture. Preserve its level of detail.'])
 w.link(edit,0,rebuild,0)
-for i in range(3):w.link(model,i,rebuild,i+1)
+for i,loader in enumerate((model,flux_clip,flux_vae)):w.link(loader,0,rebuild,i+1)
 w.link(sam,0,rebuild,4);w.link(sam,1,rebuild,5)
 refined=matte(w,rebuild,2400,0)
 arrange=w.node('LayersEditor','6 • Arrange completed layers',[2800,0],[('project','LAYERS_PROJECT'),('sam_model','MODEL')],[('project','LAYERS_PROJECT')],[''])

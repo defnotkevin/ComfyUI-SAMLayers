@@ -441,19 +441,29 @@ class LayersEditor:
         return {'ui': ui_payload(project, state), 'result': (edited_project(project, state),)}
 
 
-def inpaint(image, mask, model, clip, vae, prompt, negative, seed, steps, cfg):
+def validate_flux_fill(model):
+    config = getattr(getattr(getattr(model, 'model', None), 'model_config', None), 'unet_config', {})
+    if config.get('image_model') != 'flux' or config.get('in_channels') != 96:
+        raise ValueError('Reconstruction requires FLUX.1 Fill dev. Connect UNETLoader flux1-fill-dev.safetensors, DualCLIPLoader (type flux, CLIP-L + T5XXL), and VAELoader ae.safetensors. SD/SDXL and ordinary FLUX dev are not supported.')
+
+
+def inpaint(image, mask, model, clip, vae, prompt, negative, seed, steps, guidance):
     import nodes
-    # Pad instead of cropping: preserve image/mask registration for arbitrary sizes.
+    validate_flux_fill(model)
+    # FLUX has 2x2 latent patches, so align pixels to 16 without cropping the source.
     h, w = image.shape[1:3]
-    multiple = int(getattr(vae, 'downscale_ratio', 8))
+    multiple = 16
     ph, pw = (-h) % multiple, (-w) % multiple
     pixels = torch.nn.functional.pad(image.movedim(-1, 1), (0, pw, 0, ph), mode='replicate').movedim(1, -1)
     padded_mask = torch.nn.functional.pad(mask, (0, pw, 0, ph))
-    positive = clip.encode_from_tokens_scheduled(clip.tokenize(prompt))
-    neg = clip.encode_from_tokens_scheduled(clip.tokenize(negative))
-    # Native conditioning works for dedicated inpainting checkpoints and standard SD/SDXL.
-    positive, neg, latent = nodes.InpaintModelConditioning().encode(positive=positive, negative=neg, pixels=pixels, vae=vae, mask=padded_mask, noise_mask=True)
-    sampled = nodes.KSampler().sample(model, seed, steps, cfg, 'euler', 'normal', positive, neg, latent, denoise=1.0)[0]
+    # CFG=1 does not use conventional negative conditioning. Express exclusions
+    # in the instruction instead, and use FLUX's embedded guidance separately.
+    instruction = prompt + (f' Exclude the following from the generated area: {negative}.' if negative.strip() else '')
+    positive = clip.encode_from_tokens_scheduled(clip.tokenize(instruction), add_dict={'guidance': guidance})
+    neg = clip.encode_from_tokens_scheduled(clip.tokenize(''))
+    positive, neg, latent = nodes.InpaintModelConditioning().encode(
+        positive=positive, negative=neg, pixels=pixels, vae=vae, mask=padded_mask, noise_mask=False)
+    sampled = nodes.KSampler().sample(model, seed, steps, 1.0, 'euler', 'normal', positive, neg, latent, denoise=1.0)[0]
     generated = nodes.VAEDecode().decode(vae, sampled)[0][:, :h, :w, :3].cpu()
     alpha = mask.cpu().unsqueeze(-1)
     return image.cpu() * (1-alpha) + generated * alpha
@@ -470,14 +480,16 @@ class LayersReconstruct:
             'expand_pixels': ('INT', {'default': 32, 'min': 0, 'max': 256}),
             'seed': ('INT', {'default': 0, 'min': 0, 'max': 0xffffffffffffffff}),
             'steps': ('INT', {'default': 25, 'min': 1, 'max': 100}),
-            'cfg': ('FLOAT', {'default': 6, 'min': 0, 'max': 30})},
+            'cfg': ('FLOAT', {'default': 1, 'min': 1, 'max': 1, 'tooltip': 'Legacy saved-workflow field. FLUX sampler CFG is always 1; use flux_guidance.'})},
             'optional': {
                 'removal_margin': ('INT', {'default': 12, 'min': 0, 'max': 128,
                     'tooltip': 'Extra background pixels to regenerate around cutouts; reduces residual outlines.'}),
                 'removal_feather': ('INT', {'default': 4, 'min': 0, 'max': 32,
                     'tooltip': 'Soft transition outside the fully removed area. Original cutout masks stay unchanged.'}),
                 'reconstruction_mode': (['foreground removal', 'independent scene layers'],
-                    {'default': 'foreground removal', 'tooltip': 'Completes the backmost background surface as an editable base, then occluded layers. Requires complete_hidden. No flattened duplicate backdrop.'})}}
+                    {'default': 'foreground removal', 'tooltip': 'Completes the backmost background surface as an editable base, then occluded layers. Requires complete_hidden. No flattened duplicate backdrop.'}),
+                'flux_guidance': ('FLOAT', {'default': 30, 'min': 0, 'max': 100, 'step': 0.5}),
+                'style_prompt': ('STRING', {'default': 'Match the visible source image style, colors, lighting and texture. Preserve its level of detail.', 'multiline': True})}}
     RETURN_TYPES = ('LAYERS_PROJECT', 'IMAGE')
     RETURN_NAMES = ('project', 'background')
     FUNCTION = 'run'
@@ -485,7 +497,8 @@ class LayersReconstruct:
 
     def run(self, project, model, clip, vae, sam_model, sam_clip, background_prompt, negative_prompt,
             complete_hidden, expand_pixels, seed, steps, cfg, removal_margin=12, removal_feather=4,
-            reconstruction_mode='foreground removal'):
+            reconstruction_mode='foreground removal', flux_guidance=30,
+            style_prompt='Match the visible source image style, colors, lighting and texture. Preserve its level of detail.'):
         import comfy.model_management
         image, masks = project['image'], project['masks'].clone()
         state = json.loads(json.dumps(project['state']))
@@ -512,7 +525,7 @@ class LayersReconstruct:
             base_negative = negative_prompt
         removal = tensor(background_removal_mask(pil(union, 'L'), removal_margin, removal_feather)).unsqueeze(0)
         # Native model management loads/evicts models as each stage needs them.
-        background = (inpaint(image, removal, model, clip, vae, background_prompt, base_negative, seed, steps, cfg)
+        background = (inpaint(image, removal, model, clip, vae, f'{background_prompt}. Style: {style_prompt}', base_negative, seed, steps, flux_guidance)
                       if removal.max().item() > 0 else image.clone())
         rgbs = image.repeat(len(masks), 1, 1, 1)
         if scene:
@@ -543,9 +556,9 @@ class LayersReconstruct:
                 description = re.sub(r" #\d+$", "", layer["name"])
                 if layer.get('discovery') == 'automatic' and re.fullmatch(r'Region \d+', description):
                     description = 'the visible object'
-                prompt = f"{description}, complete intact object, natural continuation of visible shape and texture"
+                prompt = f"{description}, complete intact object, natural continuation of visible shape and texture. Style: {style_prompt}"
                 completed = inpaint(image, hole.unsqueeze(0), model, clip, vae, prompt, negative_prompt,
-                                    (seed+i+1) % (2**64), steps, cfg)
+                                    (seed+i+1) % (2**64), steps, flux_guidance)
                 if layer.get('discovery') == 'automatic':
                     # A region label is not a semantic object description. Use a
                     # visible interior point to resegment its completed pixels.

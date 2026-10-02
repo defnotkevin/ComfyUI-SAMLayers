@@ -9,7 +9,7 @@ An initial implementation of SAM3 object layers, a browser compositor with popup
 1. Copy this entire `ComfyUI-Layers` directory into your RunPod installation's `ComfyUI/custom_nodes/` directory.
 2. Use a ComfyUI version with native `SAM3_Detect` and the SAM3.1 checkpoint loader support. Your supplied `Sam3WF.json` should run first.
 3. Put `sam3.1_multiplex_fp16.safetensors` in `ComfyUI/models/checkpoints/`.
-4. For reconstruction, select a compatible SD/SDXL checkpoint with its matching CLIP and VAE. A dedicated inpainting checkpoint is preferable. **The Qwen layered checkpoint is not a drop-in inpainting model for this node.** No additional models are downloaded automatically.
+4. For reconstruction, use FLUX.1 Fill dev with separate CLIP-L + T5XXL text encoders and the FLUX VAE (see migration below). SD/SDXL reconstruction is no longer supported. **The Qwen layered checkpoint is not a drop-in inpainting model for this node.** No additional models are downloaded automatically.
 5. Restart ComfyUI and refresh the browser. Search the node menu for `Layers`.
 
 The original named/point-grid workflows need no additional Python dependencies beyond ComfyUI's PyTorch, NumPy and Pillow. The semantic vision workflows additionally need `requirements-discovery.txt`. Do not replace the RunPod PyTorch install.
@@ -289,7 +289,7 @@ The editing-only workflow saves transparent cutouts. Its faint original-image ba
 
 Load [`examples/sam3_layers_reconstruct.json`](examples/sam3_layers_reconstruct.json).
 
-1. Choose an image, SAM3 checkpoint, object descriptions, and **replace the reconstruction checkpoint placeholder** with your actual SD/SDXL model.
+1. Choose an image, SAM3 checkpoint, object descriptions, and **select FLUX.1 Fill dev, its dual text encoders, and ae.safetensors** in the three reconstruction loaders.
 2. Describe the background without the selected objects in `background_prompt`.
 3. Run and use the **first editor** to refine masks and set the back-to-front order.
 4. For hidden parts, the automatic estimate intersects foreground masks with an expanded bounding box around the visible object. If it misses a hidden region, open that object's mask popup, choose **Hidden area to reconstruct**, and paint the desired region. **Automatic hidden area** clears this manual override.
@@ -324,7 +324,7 @@ also attempts to reconstruct object parts covered by foreground layers, such as
 the chair behind a person. Those generated parts are estimates, not recovered
 original pixels. Background removal runs in either mode.
 
-The removal-mask regression tests pass locally. Visual improvement with SD 1.5
+The removal-mask regression tests pass locally. The integrated FLUX Fill path
 still needs a fresh RunPod reconstruction after deployment; a softer transition
 cannot guarantee a correct generated scene.
 
@@ -460,3 +460,43 @@ from returning the same highest-confidence cloud for separate left/right entries
 RunPod validation of a98d639 produced five separate masks: sky, left cloud, right
 cloud, grass, and character. The right-cloud and sky masks were visually checked.
 That validated discovery and segmentation, not independent layer completion.
+
+
+## FLUX Fill migration (inpainting only)
+
+Every background and hidden-layer fill now uses **FLUX.1 Fill dev**. Existing
+saved workflows must replace the reconstruction SD checkpoint loader with:
+
+- `UNETLoader`: `flux1-fill-dev.safetensors`, `fp8_e4m3fn`; connect MODEL.
+- `DualCLIPLoader`: `clip_l.safetensors` + `t5xxl_fp8_e4m3fn_scaled.safetensors`,
+  type `flux`, device `default`; connect CLIP.
+- `VAELoader`: `ae.safetensors`; connect VAE.
+
+Keep the separate SAM3 checkpoint loader connected to `sam_model` and `sam_clip`.
+Models go in `models/diffusion_models/`, `models/text_encoders/`, and `models/vae/`
+respectively. Use the regenerated reconstruction examples as wiring references.
+SD/SDXL and ordinary FLUX dev are rejected; there is no automatic fallback.
+
+Set the retained `cfg` widget to **1** in older workflows. Actual sampler CFG is
+always 1; `flux_guidance` controls the embedded guidance (default 30). Inpainting
+uses native FLUX Fill conditioning, 16-pixel padding and exact final compositing
+outside the requested mask. Conventional negative conditioning is unused at CFG 1,
+so `negative_prompt` exclusions are appended to the positive instruction. They are
+requests to the model, not hard constraints. Avoid excluding the layer you want to
+complete. DifferentialDiffusion is not required because this path supplies no
+sampler noise mask; the mask is supplied through Fill conditioning.
+
+Set `style_prompt` for **all** base and object fills. For the current example:
+`Simple flat-color cartoon illustration, solid colors, crisp smooth outlines;
+match the existing blue sky, white clouds and green grass; no photographic texture.`
+The base name controls what surface is generated; style_prompt controls its look.
+The background_prompt remains the content instruction in foreground-removal mode.
+
+Native implementation references:
+https://github.com/Comfy-Org/ComfyUI/blob/master/comfy/model_base.py
+https://github.com/Comfy-Org/ComfyUI/blob/master/comfy_extras/nodes_flux.py
+
+Local tests validate conditioning, model rejection, alignment, unchanged pixels,
+and loader wiring. They do not validate generated cloud shapes. The existing
+completion-region estimation and SAM resegmentation still require visual review;
+this migration does not claim to have solved those quality limitations.

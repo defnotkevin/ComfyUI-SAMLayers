@@ -1,5 +1,5 @@
 {
-  "last_node_id": 17,
+  "last_node_id": 19,
   "last_link_id": 20,
   "nodes": [
     {
@@ -104,7 +104,7 @@
         {
           "name": "sam_model",
           "type": "MODEL",
-          "link": 20
+          "link": 3
         }
       ],
       "outputs": [
@@ -112,7 +112,7 @@
           "name": "catalog",
           "type": "LAYERS_OBJECTS",
           "links": [
-            3
+            4
           ]
         }
       ],
@@ -144,19 +144,19 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            4,
-            7,
-            12,
-            16,
-            20
+            3,
+            5,
+            8,
+            13,
+            17
           ]
         },
         {
           "name": "CLIP",
           "type": "CLIP",
           "links": [
-            5,
-            13
+            6,
+            14
           ]
         },
         {
@@ -191,17 +191,17 @@
         {
           "name": "catalog",
           "type": "LAYERS_OBJECTS",
-          "link": 3
+          "link": 4
         },
         {
           "name": "sam_model",
           "type": "MODEL",
-          "link": 4
+          "link": 5
         },
         {
           "name": "sam_clip",
           "type": "CLIP",
-          "link": 5
+          "link": 6
         }
       ],
       "outputs": [
@@ -209,7 +209,7 @@
           "name": "project",
           "type": "LAYERS_PROJECT",
           "links": [
-            6
+            7
           ]
         }
       ],
@@ -240,12 +240,12 @@
         {
           "name": "project",
           "type": "LAYERS_PROJECT",
-          "link": 6
+          "link": 7
         },
         {
           "name": "sam_model",
           "type": "MODEL",
-          "link": 7
+          "link": 8
         }
       ],
       "outputs": [
@@ -253,7 +253,7 @@
           "name": "project",
           "type": "LAYERS_PROJECT",
           "links": [
-            8
+            9
           ]
         }
       ],
@@ -285,13 +285,13 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# Semantic automatic discovery\n\nUse Qwen VL to list objects, review that list, then run SAM3. Whole objects is the default. Background surfaces are listed but unchecked; they are not automatically used as a reconstructed background. Review boxes and depth order: model output can be wrong.\n\n## Extra requirement for this workflow\n\nInstall into the SAME Python environment that runs ComfyUI:\n\n```sh\npython -m pip install -r custom_nodes/ComfyUI-SAMLayers/requirements-discovery.txt\n```\n\nDownload the full Qwen2.5-VL-3B-Instruct repository (weights, config, processor and tokenizer), not a single Qwen diffusion checkpoint:\n\nhttps://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct\n\nhttps://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/tree/main\n\nFrom your ComfyUI directory, with the Hugging Face CLI installed:\n\n```sh\nhf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir models/LLM/Qwen2.5-VL-3B-Instruct\n```\n\n```text\nComfyUI/\n|-- models/\n|   |-- LLM/\n|   |   `-- Qwen2.5-VL-3B-Instruct/\n|   |       |-- config.json\n|   |       |-- preprocessor_config.json\n|   |       |-- tokenizer_config.json\n|   |       |-- tokenizer.json\n|   |       |-- model.safetensors.index.json\n|   |       `-- model-*.safetensors\n|   `-- checkpoints/\n|       `-- sam3.1_multiplex_fp16.safetensors\n`-- custom_nodes/\n    `-- ComfyUI-SAMLayers/\n        `-- requirements-discovery.txt\n```\n\nThe tree is illustrative: retain ALL downloaded files with their actual names. Loading uses local files only. No model download occurs during execution. CUDA is required for this discovery node. Qwen unloads before SAM3 executes; 3090 memory usage still needs live verification.\n\nRun once, open Review object list, correct names/boxes and check the objects wanted, then Apply & Run. Later open the mask editor and Apply & Run again to render. Duplicate masks are filtered by IoU; similar but distinct objects remain separate. Automatic discovery can miss objects and does not guarantee a complete decomposition.\n\n\n## Add a missed object\nIn Review Objects, choose Add object. Place include (+) and exclude (-) clicks, choose Preview SAM mask, inspect the blue highlight, then Confirm object. Repeat to add more objects, then Apply & Run. The SAM3 MODEL output must connect to Review Objects sam_model. Preview runs through the queue and pauses downstream segmentation. Confirmed masks are reused exactly. Advanced box edits discard the confirmed mask and return to text/box segmentation.\n"
+        "# Semantic automatic discovery\n\nUse Qwen VL to list objects, review that list, then run SAM3. Whole objects is the default. Background surfaces are listed but unchecked; they are not automatically used as a reconstructed background. Review boxes and depth order: model output can be wrong.\n\nTo add missed objects: connect SAM3 MODEL to Review Objects sam_model (wired here). Choose Add object, place include/exclude clicks, Preview SAM mask, inspect the blue highlight, then Confirm object. Apply & Run when finished. Preview queues inference and pauses downstream segmentation. Confirmed masks are reused; changing Advanced box coordinates discards the confirmed mask.\n\n## Extra requirement for this workflow\n\nInstall into the SAME Python environment that runs ComfyUI:\n\n```sh\npython -m pip install -r custom_nodes/ComfyUI-SAMLayers/requirements-discovery.txt\n```\n\nDownload the full Qwen2.5-VL-3B-Instruct repository (weights, config, processor and tokenizer), not a single Qwen diffusion checkpoint:\n\nhttps://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct\n\nhttps://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/tree/main\n\nFrom your ComfyUI directory, with the Hugging Face CLI installed:\n\n```sh\nhf download Qwen/Qwen2.5-VL-3B-Instruct --local-dir models/LLM/Qwen2.5-VL-3B-Instruct\n```\n\n```text\nComfyUI/\n|-- models/\n|   |-- LLM/\n|   |   `-- Qwen2.5-VL-3B-Instruct/\n|   |       |-- config.json\n|   |       |-- preprocessor_config.json\n|   |       |-- tokenizer_config.json\n|   |       |-- tokenizer.json\n|   |       |-- model.safetensors.index.json\n|   |       `-- model-*.safetensors\n|   `-- checkpoints/\n|       `-- sam3.1_multiplex_fp16.safetensors\n`-- custom_nodes/\n    `-- ComfyUI-SAMLayers/\n        `-- requirements-discovery.txt\n```\n\nThe tree is illustrative: retain ALL downloaded files with their actual names. Loading uses local files only. No model download occurs during execution. CUDA is required for this discovery node. Qwen unloads before SAM3 executes; 3090 memory usage still needs live verification.\n\nRun once, open Review object list, correct names/boxes and check the objects wanted, then Apply & Run. Later open the mask editor and Apply & Run again to render. Duplicate masks are filtered by IoU; similar but distinct objects remain separate. Automatic discovery can miss objects and does not guarantee a complete decomposition.\n"
       ]
     },
     {
       "id": 8,
-      "type": "CheckpointLoaderSimple",
-      "title": "Choose your SD/SDXL inpainting checkpoint",
+      "type": "UNETLoader",
+      "title": "FLUX.1 Fill dev",
       "pos": [
         1600,
         400
@@ -309,33 +309,87 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            9
+            10
           ]
-        },
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "flux1-fill-dev.safetensors",
+        "fp8_e4m3fn"
+      ]
+    },
+    {
+      "id": 9,
+      "type": "DualCLIPLoader",
+      "title": "FLUX text encoders",
+      "pos": [
+        1600,
+        670
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
         {
           "name": "CLIP",
           "type": "CLIP",
-          "links": [
-            10
-          ]
-        },
-        {
-          "name": "VAE",
-          "type": "VAE",
           "links": [
             11
           ]
         }
       ],
       "properties": {
-        "Node name for S&R": "CheckpointLoaderSimple"
+        "Node name for S&R": "DualCLIPLoader"
       },
       "widgets_values": [
-        "SELECT_YOUR_INPAINT_CHECKPOINT.safetensors"
+        "clip_l.safetensors",
+        "t5xxl_fp8_e4m3fn_scaled.safetensors",
+        "flux",
+        "default"
       ]
     },
     {
-      "id": 9,
+      "id": 10,
+      "type": "VAELoader",
+      "title": "FLUX VAE",
+      "pos": [
+        1600,
+        940
+      ],
+      "size": [
+        340,
+        240
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            12
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "ae.safetensors"
+      ]
+    },
+    {
+      "id": 11,
       "type": "LayersReconstruct",
       "title": "5 \u2022 Reconstruct background and hidden parts",
       "pos": [
@@ -347,38 +401,38 @@
         240
       ],
       "flags": {},
-      "order": 8,
+      "order": 10,
       "mode": 0,
       "inputs": [
         {
           "name": "project",
           "type": "LAYERS_PROJECT",
-          "link": 8
+          "link": 9
         },
         {
           "name": "model",
           "type": "MODEL",
-          "link": 9
+          "link": 10
         },
         {
           "name": "clip",
           "type": "CLIP",
-          "link": 10
+          "link": 11
         },
         {
           "name": "vae",
           "type": "VAE",
-          "link": 11
+          "link": 12
         },
         {
           "name": "sam_model",
           "type": "MODEL",
-          "link": 12
+          "link": 13
         },
         {
           "name": "sam_clip",
           "type": "CLIP",
-          "link": 13
+          "link": 14
         }
       ],
       "outputs": [
@@ -386,7 +440,7 @@
           "name": "project",
           "type": "LAYERS_PROJECT",
           "links": [
-            14
+            15
           ]
         },
         {
@@ -406,11 +460,16 @@
         0,
         "fixed",
         25,
-        6
+        1,
+        12,
+        4,
+        "independent scene layers",
+        30,
+        "Match the visible source image style, colors, lighting and texture. Preserve its level of detail."
       ]
     },
     {
-      "id": 10,
+      "id": 12,
       "type": "LayersMatte",
       "title": "Alpha matting and edge-color cleanup",
       "pos": [
@@ -422,13 +481,13 @@
         240
       ],
       "flags": {},
-      "order": 9,
+      "order": 11,
       "mode": 0,
       "inputs": [
         {
           "name": "project",
           "type": "LAYERS_PROJECT",
-          "link": 14
+          "link": 15
         }
       ],
       "outputs": [
@@ -436,7 +495,7 @@
           "name": "project",
           "type": "LAYERS_PROJECT",
           "links": [
-            15
+            16
           ]
         },
         {
@@ -456,7 +515,7 @@
       ]
     },
     {
-      "id": 11,
+      "id": 13,
       "type": "LayersEditor",
       "title": "6 \u2022 Arrange completed layers",
       "pos": [
@@ -468,18 +527,18 @@
         240
       ],
       "flags": {},
-      "order": 10,
+      "order": 12,
       "mode": 0,
       "inputs": [
         {
           "name": "project",
           "type": "LAYERS_PROJECT",
-          "link": 15
+          "link": 16
         },
         {
           "name": "sam_model",
           "type": "MODEL",
-          "link": 16
+          "link": 17
         }
       ],
       "outputs": [
@@ -487,8 +546,8 @@
           "name": "project",
           "type": "LAYERS_PROJECT",
           "links": [
-            17,
-            19
+            18,
+            20
           ]
         }
       ],
@@ -500,7 +559,7 @@
       ]
     },
     {
-      "id": 12,
+      "id": 14,
       "type": "LayersComposite",
       "title": "Render composition",
       "pos": [
@@ -512,13 +571,13 @@
         240
       ],
       "flags": {},
-      "order": 11,
+      "order": 13,
       "mode": 0,
       "inputs": [
         {
           "name": "project",
           "type": "LAYERS_PROJECT",
-          "link": 17
+          "link": 18
         }
       ],
       "outputs": [
@@ -526,7 +585,7 @@
           "name": "composite_rgba",
           "type": "IMAGE",
           "links": [
-            18
+            19
           ]
         },
         {
@@ -546,7 +605,7 @@
       "widgets_values": []
     },
     {
-      "id": 13,
+      "id": 15,
       "type": "PreviewImage",
       "title": "Composite preview",
       "pos": [
@@ -558,13 +617,13 @@
         240
       ],
       "flags": {},
-      "order": 12,
+      "order": 14,
       "mode": 0,
       "inputs": [
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 18
+          "link": 19
         }
       ],
       "outputs": [],
@@ -574,7 +633,7 @@
       "widgets_values": []
     },
     {
-      "id": 14,
+      "id": 16,
       "type": "LayersSave",
       "title": "Save editable project + PNG layers",
       "pos": [
@@ -586,13 +645,13 @@
         240
       ],
       "flags": {},
-      "order": 13,
+      "order": 15,
       "mode": 0,
       "inputs": [
         {
           "name": "project",
           "type": "LAYERS_PROJECT",
-          "link": 19
+          "link": 20
         }
       ],
       "outputs": [
@@ -610,7 +669,7 @@
       ]
     },
     {
-      "id": 15,
+      "id": 17,
       "type": "MarkdownNote",
       "title": "Requirements - ComfyUI and node packs",
       "pos": [
@@ -622,7 +681,7 @@
         1150
       ],
       "flags": {},
-      "order": 14,
+      "order": 16,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -636,7 +695,7 @@
       "bgcolor": "#172330"
     },
     {
-      "id": 16,
+      "id": 18,
       "type": "MarkdownNote",
       "title": "Requirements - Models and full download URLs",
       "pos": [
@@ -648,7 +707,7 @@
         1450
       ],
       "flags": {},
-      "order": 15,
+      "order": 17,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -656,13 +715,13 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# Requirements: model files\n\n## SAM3.1 \u2014 required\n\nFile: `sam3.1_multiplex_fp16.safetensors`\n\nPlace it in `ComfyUI/models/checkpoints/` and select it in the **SAM3.1 checkpoint** loader. That loader supplies SAM3's MODEL and CLIP outputs; no separate text-encoder or VAE file is required for segmentation.\n\nModel page:\n\nhttps://huggingface.co/Comfy-Org/sam3.1\n\nDirect checkpoint download:\n\nhttps://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors\n\n## Inpainting checkpoint \u2014 also required\n\nChoose a compatible **single-file SD/SDXL checkpoint with matching CLIP and VAE**, preferably an inpainting checkpoint. Place it in `ComfyUI/models/checkpoints/`.\n\nThe **Choose your SD/SDXL inpainting checkpoint** loader contains `SELECT_YOUR_INPAINT_CHECKPOINT.safetensors`. This is a placeholder, not a downloadable filename. Replace it with your installed checkpoint before running. Connect all three outputs from that same loader: MODEL, CLIP and VAE.\n\n### Concrete download option: SD 1.5 Inpainting\n\nFile: `sd-v1-5-inpainting.ckpt`\n\nModel page:\n\nhttps://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting\n\nDirect single-file checkpoint download:\n\nhttps://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt\n\nSelect this `.ckpt` file in the reconstruction loader if using this option. The repository's separate Diffusers component folders are not needed for this loader. This is an example option, not a GPU-tested model recommendation for this package.\n\nQwen Image Layered is not required and is not a drop-in inpainting checkpoint for this node. A standalone UNet file alone is insufficient for the example's checkpoint loader.\n"
+        "# Requirements: model files\n\n## SAM3.1 \u2014 required\n\nFile: `sam3.1_multiplex_fp16.safetensors`\n\nPlace it in `ComfyUI/models/checkpoints/` and select it in the **SAM3.1 checkpoint** loader. That loader supplies SAM3's MODEL and CLIP outputs; no separate text-encoder or VAE file is required for segmentation.\n\nModel page:\n\nhttps://huggingface.co/Comfy-Org/sam3.1\n\nDirect checkpoint download:\n\nhttps://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors\n\n## FLUX.1 Fill dev \u2014 required for every inpainting pass\n\nUse UNETLoader with `models/diffusion_models/flux1-fill-dev.safetensors`\n(weight_dtype `fp8_e4m3fn` on the tested 24 GB RunPod allocation).\nUse DualCLIPLoader with `clip_l.safetensors` and\n`t5xxl_fp8_e4m3fn_scaled.safetensors` in `models/text_encoders/`, type `flux`,\ndevice `default`. Use VAELoader with `models/vae/ae.safetensors`.\n\nFLUX Fill model: https://huggingface.co/black-forest-labs/FLUX.1-Fill-dev\nText encoders: https://huggingface.co/comfyanonymous/flux_text_encoders\nVAE: https://huggingface.co/black-forest-labs/FLUX.1-schnell/blob/main/ae.safetensors\n\nThe node uses FLUX guidance 30 and sampler CFG 1. Ordinary FLUX dev, SD 1.5,\nSDXL, and Qwen layered checkpoints are not supported for reconstruction.\nModel access/downloads must be completed separately; nothing downloads automatically.\nFor scene completion, use independent scene layers with complete_hidden enabled\nand a background surface at the back. Set style_prompt to match your actual image.\nGPU quality validation of the integrated FLUX reconstruction remains pending.\n\n"
       ],
       "color": "#243447",
       "bgcolor": "#172330"
     },
     {
-      "id": 17,
+      "id": 19,
       "type": "MarkdownNote",
       "title": "Installation - ComfyUI directory layout",
       "pos": [
@@ -674,7 +733,7 @@
         1100
       ],
       "flags": {},
-      "order": 16,
+      "order": 18,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -682,7 +741,7 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# File placement on the ComfyUI server\n\nUse your actual ComfyUI installation directory as the root below. RunPod template paths vary; do not assume a fixed `/workspace` path.\n\n```text\nComfyUI/\n|-- models/\n|   `-- checkpoints/\n|       |-- sam3.1_multiplex_fp16.safetensors\n|       `-- sd-v1-5-inpainting.ckpt  (or your chosen checkpoint)\n|-- custom_nodes/\n|   `-- ComfyUI-SAMLayers/\n|       |-- __init__.py\n|       |-- nodes.py\n|       |-- web/\n|       `-- examples/\n|-- input/\n|   `-- your_source_image.png\n`-- output/\n    `-- layers_<unique_id>/        (created when saving)\n        |-- composite.png\n        |-- layer_00.png\n        |-- rgb_00.png\n        |-- source.png\n        `-- project.json\n```\n\nUpload the source image using **LoadImage**, or place it in `input/` and select it. Example workflows live in the pack's `examples/` directory; open or drag the JSON file into ComfyUI.\n\nKeep `__init__.py` directly inside the custom node pack directory, not inside an extra nested folder from extracting a ZIP. Keep the entire pack together, including its `web/` directory.\n\nThe `output/` directory is generated output, not a model installation location. The save node writes additional per-layer files; reconstruction projects also include `background.png`.\n"
+        "# File placement on the ComfyUI server\n\nUse your actual ComfyUI installation directory as the root below. RunPod template paths vary; do not assume a fixed `/workspace` path.\n\n```text\nComfyUI/\n|-- models/\n|   `-- checkpoints/\n|       `-- sam3.1_multiplex_fp16.safetensors\n|   |-- diffusion_models/flux1-fill-dev.safetensors\n|   |-- text_encoders/clip_l.safetensors\n|   |-- text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors\n|   `-- vae/ae.safetensors\n|-- custom_nodes/\n|   `-- ComfyUI-SAMLayers/\n|       |-- __init__.py\n|       |-- nodes.py\n|       |-- web/\n|       `-- examples/\n|-- input/\n|   `-- your_source_image.png\n`-- output/\n    `-- layers_<unique_id>/        (created when saving)\n        |-- composite.png\n        |-- layer_00.png\n        |-- rgb_00.png\n        |-- source.png\n        `-- project.json\n```\n\nUpload the source image using **LoadImage**, or place it in `input/` and select it. Example workflows live in the pack's `examples/` directory; open or drag the JSON file into ComfyUI.\n\nKeep `__init__.py` directly inside the custom node pack directory, not inside an extra nested folder from extracting a ZIP. Keep the entire pack together, including its `web/` directory.\n\nThe `output/` directory is generated output, not a model installation location. The save node writes additional per-layer files; reconstruction projects also include `background.png`.\n"
       ],
       "color": "#243447",
       "bgcolor": "#172330"
@@ -707,6 +766,14 @@
     ],
     [
       3,
+      4,
+      0,
+      3,
+      1,
+      "MODEL"
+    ],
+    [
+      4,
       3,
       0,
       5,
@@ -714,7 +781,7 @@
       "LAYERS_OBJECTS"
     ],
     [
-      4,
+      5,
       4,
       0,
       5,
@@ -722,7 +789,7 @@
       "MODEL"
     ],
     [
-      5,
+      6,
       4,
       1,
       5,
@@ -730,7 +797,7 @@
       "CLIP"
     ],
     [
-      6,
+      7,
       5,
       0,
       6,
@@ -738,7 +805,7 @@
       "LAYERS_PROJECT"
     ],
     [
-      7,
+      8,
       4,
       0,
       6,
@@ -746,108 +813,100 @@
       "MODEL"
     ],
     [
-      8,
+      9,
       6,
       0,
-      9,
+      11,
       0,
       "LAYERS_PROJECT"
-    ],
-    [
-      9,
-      8,
-      0,
-      9,
-      1,
-      "MODEL"
     ],
     [
       10,
       8,
+      0,
+      11,
       1,
+      "MODEL"
+    ],
+    [
+      11,
       9,
+      0,
+      11,
       2,
       "CLIP"
     ],
     [
+      12,
+      10,
+      0,
       11,
-      8,
-      2,
-      9,
       3,
       "VAE"
     ],
     [
-      12,
+      13,
       4,
       0,
-      9,
+      11,
       4,
       "MODEL"
     ],
     [
-      13,
+      14,
       4,
       1,
-      9,
+      11,
       5,
       "CLIP"
     ],
     [
-      14,
-      9,
-      0,
-      10,
-      0,
-      "LAYERS_PROJECT"
-    ],
-    [
       15,
-      10,
-      0,
       11,
+      0,
+      12,
       0,
       "LAYERS_PROJECT"
     ],
     [
       16,
-      4,
-      0,
-      11,
-      1,
-      "MODEL"
-    ],
-    [
-      17,
-      11,
-      0,
-      12,
-      0,
-      "LAYERS_PROJECT"
-    ],
-    [
-      18,
       12,
       0,
       13,
       0,
-      "IMAGE"
+      "LAYERS_PROJECT"
     ],
     [
-      19,
-      11,
+      17,
+      4,
+      0,
+      13,
+      1,
+      "MODEL"
+    ],
+    [
+      18,
+      13,
       0,
       14,
       0,
       "LAYERS_PROJECT"
     ],
     [
-      20,
-      4,
+      19,
+      14,
       0,
-      3,
-      1,
-      "MODEL"
+      15,
+      0,
+      "IMAGE"
+    ],
+    [
+      20,
+      13,
+      0,
+      16,
+      0,
+      "LAYERS_PROJECT"
     ]
   ],
   "groups": [

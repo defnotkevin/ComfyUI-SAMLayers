@@ -405,7 +405,7 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# Requirements: model files\n\n## SAM3.1 \u2014 required\n\nFile: `sam3.1_multiplex_fp16.safetensors`\n\nPlace it in `ComfyUI/models/checkpoints/` and select it in the **SAM3.1 checkpoint** loader. That loader supplies SAM3's MODEL and CLIP outputs; no separate text-encoder or VAE file is required for segmentation.\n\nModel page:\n\nhttps://huggingface.co/Comfy-Org/sam3.1\n\nDirect checkpoint download:\n\nhttps://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors\n\n## No reconstruction model needed\n\nThis workflow extracts and edits transparent cutouts only. It does not fill the background or reconstruct hidden object parts. No SD/SDXL inpainting model or Qwen Image Layered model is required.\n"
+        "# Requirements: model files\n\n## SAM3.1 \u2014 required\n\nFile: `sam3.1_multiplex_fp16.safetensors`\n\nPlace it in `ComfyUI/models/checkpoints/` and select it in the **SAM3.1 checkpoint** loader. That loader supplies SAM3's MODEL and CLIP outputs; no separate text-encoder or VAE file is required for segmentation.\n\nModel page:\n\nhttps://huggingface.co/Comfy-Org/sam3.1\n\nDirect checkpoint download:\n\nhttps://huggingface.co/Comfy-Org/sam3.1/resolve/main/checkpoints/sam3.1_multiplex_fp16.safetensors\n\n## No reconstruction model needed\n\nThis workflow extracts and edits transparent cutouts only. It does not fill the background or reconstruct hidden object parts. No FLUX Fill model is required.\n"
       ],
       "color": "#243447",
       "bgcolor": "#172330"
