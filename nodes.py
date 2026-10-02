@@ -230,12 +230,13 @@ class LayersDiscoverObjects:
         return {'required': {'image': ('IMAGE',),
             'model_folder': ('STRING', {'default': 'Qwen2.5-VL-3B-Instruct'}),
             'detail': (['whole objects', 'detailed parts'],),
-            'max_objects': ('INT', {'default': 24, 'min': 1, 'max': 64})}}
+            'max_objects': ('INT', {'default': 24, 'min': 1, 'max': 64})},
+            'optional': {'scene_scope': (['full scene', 'foreground objects'], {'default': 'full scene'})}}
     RETURN_TYPES = ('LAYERS_OBJECTS',)
     FUNCTION = 'run'
     CATEGORY = CATEGORY
 
-    def run(self, image, model_folder, detail, max_objects):
+    def run(self, image, model_folder, detail, max_objects, scene_scope='full scene'):
         import folder_paths
         from .discovery import run_vision
         if len(image) != 1:
@@ -244,9 +245,9 @@ class LayersDiscoverObjects:
         path = (root/model_folder).resolve()
         if not path.is_relative_to(root):
             raise ValueError('Model folder must be inside ComfyUI/models/LLM/.')
-        objects = run_vision(pil(image[0], 'RGB'), path, detail, max_objects)
+        objects = run_vision(pil(image[0], 'RGB'), path, detail, max_objects, scene_scope)
         cpu = image[...,:3].detach().cpu().float()
-        signature = hashlib.sha256(cpu.contiguous().numpy().tobytes()+json.dumps(objects).encode()).hexdigest()
+        signature = hashlib.sha256(cpu.contiguous().numpy().tobytes()+json.dumps(objects).encode()+scene_scope.encode()).hexdigest()
         return ({'image':cpu,'objects':objects,'source':signature},)
 
 
@@ -323,6 +324,8 @@ class LayersSegmentObjects:
         selected = [item for item in parse_objects(json.dumps(catalog['objects'])) if item['enabled']]
         if not selected:
             raise ValueError('Select at least one object in Review Objects, then Apply & Run.')
+        # Preserve relative depth within each kind, but keep scene surfaces behind subjects.
+        selected.sort(key=lambda item: item['kind'] != 'background')
         image = catalog['image']; h,w = image.shape[1:3]
         masks, names, kinds = [], [], []
         for item in selected:
@@ -482,10 +485,13 @@ class LayersReconstruct:
         image, masks = project['image'], project['masks'].clone()
         state = json.loads(json.dumps(project['state']))
         h, w = image.shape[1:3]
-        union = masks.amax(dim=0)
+        # Environmental layers are editable surfaces, not foreground removal targets.
+        removable = [i for i, layer in enumerate(state['layers']) if layer.get('kind') != 'background']
+        union = masks[removable].amax(dim=0) if removable else torch.zeros_like(masks[0])
         removal = tensor(background_removal_mask(pil(union, 'L'), removal_margin, removal_feather)).unsqueeze(0)
         # Native model management loads/evicts models as each stage needs them.
-        background = inpaint(image, removal, model, clip, vae, background_prompt, negative_prompt, seed, steps, cfg)
+        background = (inpaint(image, removal, model, clip, vae, background_prompt, negative_prompt, seed, steps, cfg)
+                      if removal.max().item() > 0 else image.clone())
         rgbs = image.repeat(len(masks), 1, 1, 1)
         # State order is back-to-front. Restrict completion to foreground occluders
         # near the visible object's bounding box; user can override with a painted region.

@@ -75,12 +75,18 @@ with your installed ComfyUI should also be checked after installation.
 ### Use the workflow
 
 1. Choose the source image and set **whole objects** (default) or **detailed parts**.
+   Use **scene_scope: full scene** (default) to include environmental layers, or
+   **foreground objects** for the previous foreground-focused discovery.
 2. Run. Qwen proposes names, short segmentation descriptions and instance bounding boxes.
 3. Open **Review object list**. Check desired objects, rename them, change SAM descriptions,
    edit boxes, remove duplicates or add missed objects. Click a row to see its box.
    Boxes use `[left, top, right, bottom]` coordinates from 0–1000 over the original image.
-4. Background surfaces are labeled separately and unchecked by default. Checking one
-   makes it a normal segmented layer; it is not automatically a clean background.
+4. Full-scene discovery requests separate visible cloud instances, terrain/grass,
+   sky and other scene surfaces when present, with all entries checked by default.
+   Background entries become normal editable masks behind foreground subjects.
+   Review can select all scene layers or select objects only. Saved unchecked
+   choices remain unchecked; discovering a different scope requires fresh review.
+   A visible surface mask is not a completed layer behind occluding objects.
 5. **Apply & Run** sends each selected description and box to SAM3 separately.
    Nearly identical masks are discarded by IoU; unrelated candidates are never unioned.
    If an object cannot be segmented, the node asks you to correct/uncheck it rather
@@ -130,8 +136,8 @@ Discovery requests absolute pixel boxes from Qwen on an explicitly resized image
 further processor resizing and converts these boxes to the editor's 0–1000 scale.
 It does not guess the coordinate scale from whether numbers exceed 1000.
 Diagnostics include the image dimensions used for generation. Existing saved
-review lists keep their normalized coordinate format. The prompt prioritizes
-visible foreground objects without prescribing a list of background surfaces;
+review lists keep their normalized coordinate format. The full-scene prompt requests visible foreground and background layers,
+avoids duplicate grass/hill descriptions for the same region, and requests back-to-front order;
 review the results because correct JSON does not guarantee correct detections.
 Qwen's coordinate convention is described at:
 https://qwenlm.github.io/blog/qwen2.5-vl/
@@ -287,7 +293,9 @@ Load [`examples/sam3_layers_reconstruct.json`](examples/sam3_layers_reconstruct.
 2. Describe the background without the selected objects in `background_prompt`.
 3. Run and use the **first editor** to refine masks and set the back-to-front order.
 4. For hidden parts, the automatic estimate intersects foreground masks with an expanded bounding box around the visible object. If it misses a hidden region, open that object's mask popup, choose **Hidden area to reconstruct**, and paint the desired region. **Automatic hidden area** clears this manual override.
-5. Apply & Run. Reconstruction removes all selected objects to make a clean background. For each partially hidden layer, it inpaints its candidate region, then runs SAM3 on the generated image to recover an object-shaped alpha mask. Pixels outside the fill region stay unchanged.
+5. Apply & Run. Reconstruction removes selected foreground objects to make a clean background;
+   layers marked background are excluded from this removal union to avoid erasing
+   the entire scene when sky or terrain is selected. For each partially hidden layer, it inpaints its candidate region, then runs SAM3 on the generated image to recover an object-shaped alpha mask. Pixels outside the fill region stay unchanged.
 6. Open the **second editor** to review and arrange reconstructed layers. Apply & Run to render/save.
 
 Move/scale/rotate in the **second editor** to reuse ComfyUI's cached reconstruction. Change source masks or depth order in the **first editor** when regeneration is needed. Regenerated content from the same source scene keeps downstream transforms and groups while replacing stale masks. Editing a mask in the second editor changes its cutout only; it does not send edits backwards to reconstruction.
@@ -413,3 +421,8 @@ outside the selection. Rotation uses the selection's center, including grouped
 or multiple selected layers. Hold Shift while dragging to snap the rotation delta
 to 15-degree increments. Numeric Rotation remains available for exact angles;
 rotation supports Undo/Redo and is saved with Apply & Run.
+
+Full-scene discovery does not yet provide independent clean-plate completion for
+every environmental layer. The reconstructed base can still contain environmental
+features when those layers are moved. Use the editing-only workflow for transparent
+cutouts; review generated fills before relying on hidden background content.

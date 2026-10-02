@@ -83,6 +83,7 @@ function review(node){
         button(row,'Remove',()=>{state.objects.splice(i,1);selected=Math.min(selected,state.objects.length-1);list();draw();});
     });}
     button(actions,'Add object',addObject);
+    button(actions,'Select all scene layers',()=>{state.objects.forEach(o=>o.enabled=true);list();});
     button(actions,'Select objects only',()=>{state.objects.forEach(o=>o.enabled=o.kind==='object');list();});
     list();dialog.showModal();
 }

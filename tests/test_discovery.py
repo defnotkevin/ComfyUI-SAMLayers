@@ -34,6 +34,44 @@ class DiscoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'kind must be'):
             normalize_discovery(raw.replace('foreground', 'unknown'))
 
+    def test_full_scene_enables_background_without_changing_saved_review_choices(self):
+        raw=json.dumps(objects())
+        result=normalize_discovery(raw,include_background=True)
+        self.assertTrue(all(x['enabled'] for x in result))
+        result[1]['enabled']=False
+        self.assertFalse(parse_objects(json.dumps(result))[1]['enabled'])
+        prompt=discovery_prompt('whole objects',24)
+        self.assertIn('each cloud separately',prompt)
+        self.assertIn('sky',prompt)
+        self.assertIn('Do not invent',prompt)
+        self.assertNotIn('each cloud separately',discovery_prompt('whole objects',24,scene_scope='foreground objects'))
+
+    def test_scene_segmentation_keeps_background_behind_person(self):
+        items=normalize_discovery(json.dumps(objects()),include_background=True)
+        masks=[torch.zeros(1,16,24),torch.zeros(1,16,24)]
+        masks[0][:,12:,:]=1  # floor is processed first despite foreground-first input
+        masks[1][:,2:10,8:16]=1
+        catalog={'image':torch.zeros(1,16,24,3),'objects':items}
+        with patch.object(nodes,'detect',side_effect=masks):
+            project=nodes.LayersSegmentObjects().run(catalog,None,None,.5,.9)[0]
+        self.assertEqual([l['name'] for l in project['state']['layers']],['floor','person'])
+        self.assertEqual([l['kind'] for l in project['state']['layers']],['background','object'])
+        self.assertEqual(len(project['masks']),2)
+
+    def test_background_layers_do_not_erase_the_whole_scene(self):
+        image=torch.zeros(1,16,24,3)
+        masks=torch.ones(2,16,24);masks[1]=0;masks[1,4:10,8:14]=1
+        project=nodes.new_project(image,masks,['sky','person'])
+        project['state']['layers'][0]['kind']='background'
+        mm=types.SimpleNamespace();comfy=types.ModuleType('comfy');comfy.model_management=mm
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',return_value=image) as fill:
+            nodes.LayersReconstruct().run(project,None,None,None,None,None,'','',False,32,0,25,6,0,0)
+            self.assertTrue(torch.equal(fill.call_args.args[1][0],masks[1]))
+            project['state']['layers'][1]['kind']='background';fill.reset_mock()
+            result=nodes.LayersReconstruct().run(project,None,None,None,None,None,'','',False,32,0,25,6,0,0)
+            fill.assert_not_called()
+            self.assertTrue(torch.equal(result[1],image))
+
     def test_click_preview_pauses_and_confirmed_mask_is_reused(self):
         class Blocker:
             def __init__(self,value):pass
@@ -136,10 +174,10 @@ class DiscoveryTests(unittest.TestCase):
                     'folder_paths':types.SimpleNamespace(get_temp_directory=lambda:directory)}
                 with patch.dict(sys.modules,modules),patch('torch.cuda.is_available',return_value=True):
                     if succeeds:
-                        self.assertEqual(run_vision(Image.new('RGB',(1036,672)),directory,'whole objects',24),parse_objects(json.dumps(objects())))
+                        self.assertEqual(run_vision(Image.new('RGB',(1036,672)),directory,'whole objects',24,scene_scope='foreground objects'),parse_objects(json.dumps(objects())))
                     else:
                         with self.assertRaisesRegex(ValueError,'Raw responses saved to'):
-                            run_vision(Image.new('RGB',(1036,672)),directory,'whole objects',24)
+                            run_vision(Image.new('RGB',(1036,672)),directory,'whole objects',24,scene_scope='foreground objects')
                         paths=list((Path(directory)/'samlayers_discovery').glob('failed_*.json'))
                         self.assertEqual(len(paths),1)
                         saved=json.loads(paths[0].read_text())['attempts']
@@ -214,7 +252,7 @@ class DiscoveryTests(unittest.TestCase):
             (Path(directory)/'config.json').write_text('{}')
             with patch.dict(sys.modules,{'comfy':fake,'comfy.model_management':mm,'transformers':transformers}),patch('torch.cuda.is_available',return_value=True):
                 with self.assertRaisesRegex(RuntimeError,'simulated failure'):
-                    run_vision(Image.new('RGB',(1036,672)),directory,'whole objects',24)
+                    run_vision(Image.new('RGB',(1036,672)),directory,'whole objects',24,scene_scope='foreground objects')
         self.assertEqual(events,['unload','clear','clear'])
 
 if __name__=='__main__':unittest.main()
