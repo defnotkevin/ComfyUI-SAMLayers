@@ -312,7 +312,10 @@ edges cannot blend the original object back into the generated background.
 `removal_margin` expands that solid area (default **12 source pixels**), and
 `removal_feather` adds a soft transition outside it (default **4 pixels**).
 Neither control changes the object's editable mask. Pixels outside the removal
-mask and its feather remain unchanged. Increase the margin for residual outlines;
+mask and its feather remain unchanged. FLUX conditioning uses a separate binary
+mask covering the entire blend plus a 16-pixel guard at processing resolution.
+The final composite uses the original soft blend, so this extra inference coverage
+does not enlarge the edited area. Increase the margin for residual outlines;
 larger margins also regenerate more of the surrounding scene.
 
 Existing workflows use these defaults when the new optional inputs are absent.
@@ -510,7 +513,12 @@ with `completion_context` pixels of context (default 64, minimum crop side 256
 unless the source is smaller). `completion_resolution` sets the crop's longest
 processing side (default 768); dimensions align to FLUX's 16-pixel grid. The result
 is mapped back to source coordinates. Final RGB changes are restricted to the
-completion region, with existing nonzero target-mask pixels protected exactly.
+completion region plus a narrow soft transition into existing target pixels,
+controlled by `removal_feather`. The transition never expands the layer silhouette.
+Pixels beyond it remain exact; set `removal_feather=0` to preserve all originally
+visible pixels. The hole itself is fully replaced, including softly painted holes.
+Generated pixels are blended once at source resolution, avoiding a squared feather
+weight or a hard cut back to the hole boundary.
 The full-scene base fill still runs at source resolution.
 
 Automatic regions use a convex envelope of the visible silhouette, expanded by
@@ -533,7 +541,8 @@ are stripped from crop prompts, since their full-scene positions no longer apply
 For the cartoon test use: `Flat-color cartoon, uniform solid colors and smooth
 outlines matching the visible image.` Avoid scene inventories and exclusion lists.
 
-Local tests cover crop placement, resizing/compositing registration, exact visible
-pixel preservation, manual regions, silhouette bounds, surface alpha and failed
+Local tests cover crop placement, resizing/compositing registration, exact pixels
+outside the blend, binary conditioning coverage, single-pass seam weights,
+manual regions, silhouette bounds, surface alpha and failed
 object completion. Generated quality still requires a RunPod visual test after
 these changes are pushed.

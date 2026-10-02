@@ -13,7 +13,7 @@ from PIL import Image, ImageFilter
 
 from .project import (VERSION, MAX_LAYERS, parse_state, layer_matrix,
                       inverse_pillow, visible)
-from .reconstruction import background_removal_mask, completion_region, completion_crop
+from .reconstruction import background_removal_mask, completion_region, completion_crop, completion_blend_mask
 
 CATEGORY = 'Layers'
 
@@ -455,7 +455,13 @@ def inpaint(image, mask, model, clip, vae, prompt, negative, seed, steps, guidan
     multiple = 16
     ph, pw = (-h) % multiple, (-w) % multiple
     pixels = torch.nn.functional.pad(image.movedim(-1, 1), (0, pw, 0, ph), mode='replicate').movedim(1, -1)
-    padded_mask = torch.nn.functional.pad(mask, (0, pw, 0, ph))
+    # Conditioning must fully erase every pixel used by the final blend.
+    # Keep one FLUX patch of generated context beyond that blend to avoid
+    # resampling source-colored edges back into the replacement.
+    conditioning_mask = torch.stack([
+        tensor(background_removal_mask(pil(m, 'L'), 16, 0)) for m in mask.cpu()
+    ])
+    padded_mask = torch.nn.functional.pad(conditioning_mask, (0, pw, 0, ph), mode='replicate')
     # FLUX Fill uses embedded guidance at CFG 1. Keep the instruction positive;
     # listing excluded scene objects can cause them to be generated again.
     positive = clip.encode_from_tokens_scheduled(clip.tokenize(prompt), add_dict={'guidance': guidance})
@@ -544,20 +550,22 @@ class LayersReconstruct:
                 front = source_masks[i+1:].amax(0) if i+1<len(masks) else torch.zeros_like(original)
                 region = layer.get('completion')
                 if region:
-                    hole = read_mask(region, (w, h)) * (original <= 0)
+                    hole = (read_mask(region, (w, h)) > 0).float() * (original <= 0)
                 else:
                     hole = tensor(completion_region(pil(original,'L'),pil(front,'L'),expand_pixels))
                 if hole.max().item() <= 0:
                     continue
+                blend = tensor(completion_blend_mask(pil(original,'L'),pil(hole,'L'),removal_feather))
                 x0,y0,x1,y1 = completion_crop(pil(original,'L'),pil(hole,'L'),completion_context)
                 visible_crop=original[y0:y1,x0:x1]
                 hole_crop=hole[y0:y1,x0:x1]
-                # Erase occluder context as well as the requested hole, so a partial
-                # person does not remain in the crop conditioning. Only hole pixels
-                # are allowed into the final layer; visible target pixels are protected.
+                # Erase occluders and the transition band in model conditioning.
+                # Final RGB blending is separate from the generated context mask.
                 context_mask=torch.maximum(front,hole)
                 fill=tensor(background_removal_mask(pil(context_mask,'L'),removal_margin,removal_feather))
-                fill=fill[y0:y1,x0:x1]*(visible_crop<=0)
+                fill=torch.maximum(fill*(original<=0),blend)
+                fill=(fill[y0:y1,x0:x1]>0).float()
+                blend_crop=blend[y0:y1,x0:x1]
                 crop=image[:,y0:y1,x0:x1]
                 ch,cw=crop.shape[1:3]
                 scale=completion_resolution/max(ch,cw)
@@ -574,8 +582,12 @@ class LayersReconstruct:
                 generated=inpaint(pixels,fill_scaled,model,clip,vae,prompt,'',
                                   (seed+i+1) % (2**64),steps,flux_guidance)
                 generated=torch.nn.functional.interpolate(generated.movedim(-1,1),size=(ch,cw),mode='bilinear',align_corners=False).movedim(1,-1)
-                # Restore original context exactly after resizing for reliable SAM matching.
-                completed=crop*(1-fill[None,...,None])+generated*fill[None,...,None]
+                # Apply the soft transition once, at source resolution. Blending
+                # a feathered result twice squares its weight and leaves ghosts.
+                completed=crop*(1-blend_crop[None,...,None])+generated*blend_crop[None,...,None]
+                # SAM sees the erased context too, not the original occluder
+                # restored outside the final cutout's permitted RGB blend.
+                segmentation_image=crop*(1-fill[None,...,None])+generated*fill[None,...,None]
                 if surface:
                     # A continuous surface fills its bounded occlusion region. SAM
                     # must not punch the old subject silhouette back out of this fill.
@@ -584,9 +596,9 @@ class LayersReconstruct:
                     if layer.get('discovery')=='automatic':
                         interior=torch.nn.functional.avg_pool2d(visible_crop[None,None],7,stride=1,padding=3)[0,0]*visible_crop
                         index=int(interior.argmax())
-                        candidates=detect(sam_model,completed,positive=[{'x':index % cw,'y':index // cw}])
+                        candidates=detect(sam_model,segmentation_image,positive=[{'x':index % cw,'y':index // cw}])
                     else:
-                        candidates=detect(sam_model,completed,sam_clip,description)
+                        candidates=detect(sam_model,segmentation_image,sam_clip,description)
                     if not len(candidates) or not candidates.max().item():
                         raise ValueError(f'Could not segment reconstructed {layer["name"]}; adjust its completion region or description.')
                     score=(candidates*visible_crop).sum((1,2))/(candidates+visible_crop-candidates*visible_crop).sum((1,2)).clamp_min(1)
@@ -594,7 +606,7 @@ class LayersReconstruct:
                     if not ((alpha>.5)&(hole_crop>.5)).any():
                         raise ValueError(f'Completion added no pixels to {layer["name"]}. Review its hidden-area mask or description; the layer is not complete.')
                 masks[i,y0:y1,x0:x1]=torch.maximum(visible_crop,alpha*hole_crop)
-                rgbs[i,y0:y1,x0:x1]=crop[0]*(1-hole_crop[...,None])+completed[0]*hole_crop[...,None]
+                rgbs[i,y0:y1,x0:x1]=completed[0]
                 layer['mask'] = data_url(pil(masks[i], 'L'))
         result = dict(project, background=None if scene else background, masks=masks, rgbs=rgbs, state=state)
         # A new editor source signature invalidates only stale downstream edit sessions.

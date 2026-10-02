@@ -68,3 +68,25 @@ class CompletionGeometryTests(unittest.TestCase):
         visible=Image.new('L',(32,32));visible.paste(255,(8,8,20,20))
         self.assertIsNone(module.completion_region(visible,Image.new('L',visible.size),32).getbbox())
         with self.assertRaises(ValueError):module.completion_crop(Image.new('L',(8,8)),Image.new('L',(8,8)))
+
+
+class CompletionBlendTests(unittest.TestCase):
+    def test_transition_is_inside_target_and_core_is_opaque(self):
+        visible=Image.new('L',(96,96));visible.paste(255,(8,8,88,88))
+        hole=Image.new('L',visible.size);hole.paste(128,(40,40,56,56))
+        visible.paste(0,(40,40,56,56))
+        before=visible.tobytes()
+        blend=module.completion_blend_mask(visible,hole,4)
+        self.assertEqual(blend.getpixel((40,40)),255)
+        self.assertTrue(0<blend.getpixel((39,48))<255)
+        self.assertEqual(blend.getpixel((0,0)),0)
+        self.assertEqual(blend.getpixel((12,12)),0)
+        self.assertEqual(visible.tobytes(),before)
+        self.assertEqual(module.completion_blend_mask(visible,hole,0).getpixel((39,48)),0)
+
+    def test_blend_never_grows_object_into_empty_background(self):
+        visible=Image.new('L',(64,64));visible.paste(255,(16,16,32,48))
+        hole=Image.new('L',visible.size);hole.paste(255,(32,24,40,40))
+        blend=module.completion_blend_mask(visible,hole,4)
+        self.assertEqual(blend.getpixel((40,32)),0)
+        self.assertGreater(blend.getpixel((31,32)),0)

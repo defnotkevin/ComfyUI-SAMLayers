@@ -75,3 +75,17 @@ def completion_crop(visible, hole, context=64, min_side=256):
         return start,start+size
     x0,x1=axis(box[0],box[2],w);y0,y1=axis(box[1],box[3],h)
     return x0,y0,x1,y1
+
+
+def completion_blend_mask(visible, hole, feather=4):
+    """Replace the full hole and blend only into existing target support.
+
+    The transition changes RGB, never expands the cutout silhouette. Setting
+    feather to zero preserves all originally visible pixels exactly.
+    """
+    if visible.size != hole.size:
+        raise ValueError('Completion masks must match.')
+    core = background_removal_mask(hole, 0, 0)
+    transition = background_removal_mask(core, 0, feather)
+    support = visible.convert('L').point(lambda x: 255 if x > 0 else 0)
+    return ImageChops.lighter(core, ImageChops.darker(transition, support))

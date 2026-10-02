@@ -184,7 +184,7 @@ class LayersTests(unittest.TestCase):
         self.assertNotIn('refine_region',result)
 
     def test_native_inpaint_padding_and_unchanged_pixels(self):
-        image=torch.ones(1,13,19,3)*.2;mask=torch.zeros(1,13,19);mask[:,3:6,4:8]=1
+        image=torch.ones(1,13,19,3)*.2;mask=torch.zeros(1,13,19);mask[:,3:6,4:8]=1;mask[:,6,4:8]=.25
         seen={}
         class Clip:
             def tokenize(self,s):return s
@@ -209,6 +209,9 @@ class LayersTests(unittest.TestCase):
         self.assertEqual(tuple(out.shape),tuple(image.shape))
         self.assertTrue(torch.equal(out[mask==0],image[mask==0]))
         self.assertTrue(torch.all(out[mask==1]==1))
+        self.assertTrue(torch.allclose(out[mask==.25],torch.full_like(out[mask==.25],.4)))
+        self.assertTrue(torch.all((seen['mask']==0)|(seen['mask']==1)))
+        self.assertTrue(torch.all(seen['mask'][:,:13,:19][mask>0]==1))
 
     def test_inpaint_rejects_sd_and_non_fill_flux(self):
         for config in ({}, {'image_model':'flux','in_channels':16}, {'image_model':'sd15','in_channels':96}):
@@ -221,7 +224,7 @@ class LayersTests(unittest.TestCase):
         fake_comfy=types.ModuleType('comfy');fake_comfy.model_management=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
         def fake_fill(image,mask,*args):return image*(1-mask[...,None])+torch.ones_like(image)*mask[...,None]
         with patch.dict(sys.modules,{'comfy':fake_comfy,'comfy.model_management':fake_comfy.model_management}),patch.object(nodes,'inpaint',side_effect=fake_fill),patch.object(nodes,'detect',return_value=torch.ones(1,16,24)):
-            result,_=nodes.LayersReconstruct().run(p,None,None,None,None,None,'empty','',True,32,0,2,6)
+            result,_=nodes.LayersReconstruct().run(p,None,None,None,None,None,'empty','',True,32,0,2,6,removal_feather=0)
         old=p['masks'][0]>0
         self.assertTrue(torch.equal(result['rgbs'][0][old],p['image'][0][old]))
         self.assertTrue(torch.all(result['masks'][0]==1))
@@ -315,6 +318,28 @@ class LayersTests(unittest.TestCase):
             result,_=nodes.LayersReconstruct().run(p,None,None,None,None,None,'background','',True,0,0,2,1)
         detect.assert_not_called()
         self.assertTrue(torch.all(result['masks'][0,4:8,8:12]==1))
+
+    def test_surface_blends_once_without_changing_alpha_or_distant_pixels(self):
+        image=torch.full((1,96,96,3),.2)
+        visible=torch.ones(96,96);visible[40:56,40:56]=0
+        p=nodes.new_project(image,visible[None],['grass'])
+        p['state']['layers'][0]['kind']='background'
+        hole=Image.new('L',(96,96));hole.paste(128,(40,40,56,56))
+        p['state']['layers'][0]['completion']=nodes.data_url(hole)
+        mm=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
+        comfy=types.ModuleType('comfy');comfy.model_management=mm
+        calls=[]
+        def fill(image,mask,*args):
+            calls.append(mask)
+            return image*(1-mask[...,None])+mask[...,None]
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=fill):
+            result,_=nodes.LayersReconstruct().run(p,None,None,None,None,None,'background','',True,0,0,2,1,removal_feather=4,completion_resolution=384)
+        blend=nodes.tensor(nodes.completion_blend_mask(nodes.pil(visible,'L'),hole,4))
+        expected=image[0]*(1-blend[...,None])+blend[...,None]
+        self.assertTrue(torch.allclose(result['rgbs'][0],expected,atol=1e-6))
+        self.assertTrue(torch.all(result['masks'][0]==1))
+        self.assertTrue(torch.equal(result['rgbs'][0,0],image[0,0]))
+        self.assertTrue(torch.all((calls[-1]==0)|(calls[-1]==1)))
 
     def test_unchanged_object_completion_is_reported(self):
         p=self.project();p['state']['layers'][0]['completion']=nodes.data_url(Image.new('L',(24,16),255))
