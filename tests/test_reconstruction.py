@@ -90,3 +90,69 @@ class CompletionBlendTests(unittest.TestCase):
         blend=module.completion_blend_mask(visible,hole,4)
         self.assertEqual(blend.getpixel((40,32)),0)
         self.assertGreater(blend.getpixel((31,32)),0)
+
+
+class QualityRegressionTests(unittest.TestCase):
+    def test_color_matching_preserves_texture_and_corrects_offset(self):
+        import numpy as np
+        yy,xx=np.mgrid[:128,:160]
+        texture=.02*np.sin(xx*1.7)+.01*np.cos(yy*2.1)
+        source=np.stack([.3+texture,.5+texture,.6+texture],-1).astype('float32')
+        generated=source+np.array([.06,-.04,.025],dtype='float32')
+        known=np.ones((128,160),dtype='float32');known[24:104,32:128]=0
+        # The erased original is deliberately unrelated to the desired output.
+        damaged=source.copy();damaged[known==0]=[1,0,0]
+        matched=module.match_boundary_colors(damaged,generated,known)
+        self.assertLess(float(np.abs(matched-source).max()),2e-5)
+        self.assertGreater(float(matched[40:80,50:100,0].std()),.01)
+
+    def test_color_matching_uses_spatial_context_for_lighting_gradient(self):
+        import numpy as np
+        yy,xx=np.mgrid[:64,:64]
+        source=np.full((64,64,3),.5,dtype='float32')
+        offset=(xx/63*.1-.05).astype('float32')
+        generated=source+offset[...,None]
+        known=np.ones((64,64),dtype='float32');known[16:48,16:48]=0
+        matched=module.match_boundary_colors(source,generated,known)
+        self.assertLess(float(np.abs(matched-source).max()),.002)
+
+    def test_no_reference_does_not_invent_a_palette_and_large_shifts_are_bounded(self):
+        import numpy as np
+        source=np.zeros((32,32,3),dtype='float32');gen=np.full_like(source,.8)
+        self.assertTrue(np.array_equal(module.match_boundary_colors(source,gen,np.zeros((32,32))),gen))
+        self.assertTrue(np.allclose(module.match_boundary_colors(source,gen,np.ones((32,32))),.55))
+
+    def test_automatic_completion_keeps_round_shape_beyond_estimated_hole(self):
+        from PIL import ImageDraw
+        visible=Image.new('L',(80,64));ImageDraw.Draw(visible).ellipse((10,20,40,44),fill=255)
+        predicted=visible.copy();ImageDraw.Draw(predicted).ellipse((25,12,60,48),fill=255)
+        # Disconnected second instance must not be adopted.
+        ImageDraw.Draw(predicted).ellipse((66,2,78,12),fill=255)
+        hole=Image.new('L',visible.size);hole.paste(255,(34,24,44,40))
+        allowed=Image.new('L',visible.size,255)
+        merged=module.merge_completion_alpha(visible,predicted,hole,allowed)
+        self.assertEqual(merged.getpixel((53,30)),255)
+        self.assertEqual(merged.getpixel((72,7)),0)
+        self.assertEqual(merged.getpixel((3,30)),0)
+        manual=module.merge_completion_alpha(visible,predicted,hole,allowed,manual=True)
+        self.assertEqual(manual.getpixel((53,30)),0)
+        self.assertEqual(manual.getpixel((40,30)),255)
+
+    def test_narrow_join_is_repaired_but_distant_gap_and_manual_region_are_preserved(self):
+        visible=Image.new('L',(80,64));visible.paste(255,(8,8,40,56))
+        hole=Image.new('L',visible.size);hole.paste(255,(41,8,60,56))
+        predicted=Image.new('L',visible.size);predicted.paste(255,(8,8,60,56))
+        allowed=Image.new('L',visible.size);allowed.paste(255,(38,6,64,58))
+        merged=module.merge_completion_alpha(visible,predicted,hole,allowed)
+        self.assertEqual(merged.getpixel((40,30)),255)
+        self.assertEqual(merged.getpixel((65,30)),0)
+        manual=module.merge_completion_alpha(visible,predicted,hole,allowed,manual=True)
+        self.assertEqual(manual.getpixel((40,30)),0)
+
+    def test_manual_completion_can_join_across_original_segmentation_gap(self):
+        visible=Image.new('L',(32,32));visible.paste(255,(4,4,12,28))
+        hole=Image.new('L',visible.size);hole.paste(255,(12,4,20,28))
+        predicted=Image.new('L',visible.size,255)
+        merged=module.merge_completion_alpha(visible,predicted,hole,predicted,manual=True)
+        self.assertEqual(merged.getpixel((15,15)),255)
+        self.assertEqual(merged.getpixel((21,15)),0)

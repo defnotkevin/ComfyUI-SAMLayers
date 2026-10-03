@@ -526,7 +526,9 @@ Automatic regions use a convex envelope of the visible silhouette, expanded by
 bounding-box corners and bridges interrupted visible pieces, but can overestimate
 concave shapes. A painted **Hidden area to reconstruct** remains authoritative.
 Occluder pixels elsewhere inside the context crop are also removed for inference;
-those extra generated pixels are discarded from the final cutout.
+SAM may accept connected parts of the target within that generated context.
+The initial automatic hole is a generation hint, not a hard clipping polygon.
+Disconnected instances are excluded. Painted completion regions remain hard limits.
 
 Background layers named sky, grass, hill(s), ground, floor, wall, ceiling or water
 are treated as continuous surfaces: their bounded completion alpha is retained
@@ -564,3 +566,28 @@ A failed completion leaves its preceding captures available for inspection.
 Restart without the environment variable to disable capture. GPU visual
 validation still requires a diagnostic run; previous runs cannot recover raw
 FLUX pixels from the final saved layers.
+
+
+### Reconstruction color and alpha joins
+
+Before compositing, reconstruction estimates a smooth RGB correction from
+unremoved source context and propagates it through the generated region. This
+corrects broad color/lighting drift without imposing a palette or flattening
+generated texture. Corrections are bounded to 0.25 per channel; fewer than 16
+reference pixels leave the output uncorrected. This is not a style classifier,
+texture validator, or guarantee of a seamless result. Abrupt material changes,
+small reference regions, and large hallucinations still require visual review.
+
+Automatic object completion retains SAM components connected to the visible
+target inside generated context, instead of clipping them to the initial convex
+hole estimate. Newly accepted pixels receive generated RGB too. A two-pixel
+closing near the hole repairs narrow alpha cracks; it does not repair broad
+segmentation errors. Manual painted regions are never expanded by this merge.
+Continuous-surface completion keeps its estimated region with a narrow join band.
+Diagnostic runs additionally capture `color-matched`, `accepted-alpha`,
+`accepted-blend`, and `accepted-rgb` to distinguish each correction stage.
+
+These changes have synthetic regression coverage for textured color offsets,
+lighting gradients, mask joins, and rounded completion beyond the initial hole.
+They still need RunPod validation on real photographs, paintings, illustrations,
+and transparent or fine-edged objects before production use.

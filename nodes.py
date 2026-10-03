@@ -14,7 +14,7 @@ from PIL import Image, ImageFilter
 
 from .project import (VERSION, MAX_LAYERS, parse_state, layer_matrix,
                       inverse_pillow, visible)
-from .reconstruction import background_removal_mask, completion_region, completion_crop, completion_blend_mask
+from .reconstruction import background_removal_mask, completion_region, completion_crop, completion_blend_mask, match_boundary_colors, merge_completion_alpha
 
 CATEGORY = 'Layers'
 
@@ -472,12 +472,17 @@ def inpaint(image, mask, model, clip, vae, prompt, negative, seed, steps, guidan
     sampled = nodes.KSampler().sample(model, seed, steps, 1.0, 'euler', 'normal', positive, neg, latent, denoise=1.0)[0]
     generated = nodes.VAEDecode().decode(vae, sampled)[0][:, :h, :w, :3].cpu()
     alpha = mask.cpu().unsqueeze(-1)
-    blended = image.cpu() * (1-alpha) + generated * alpha
+    # Measure against reliable unremoved context, never the occluded source.
+    corrected=torch.stack([torch.from_numpy(match_boundary_colors(
+        image[b].cpu().numpy(),generated[b].numpy(),(mask[b].cpu()<=0).float().numpy()))
+        for b in range(len(image))])
+    blended = image.cpu() * (1-alpha) + corrected * alpha
     if capture is not None:
         capture('input', image[0], 'RGB')
         capture('blend-mask', mask[0], 'L')
         capture('conditioning-mask', conditioning_mask[0], 'L')
         capture('raw-flux', generated[0], 'RGB')
+        capture('color-matched', corrected[0], 'RGB')
         capture('inpaint-composite', blended[0], 'RGB')
     return blended
 
@@ -651,7 +656,25 @@ class LayersReconstruct:
                     if not ((alpha>.5)&(hole_crop>.5)).any():
                         raise ValueError(f'Completion added no pixels to {layer["name"]}. Review its hidden-area mask or description; the layer is not complete.')
                 trace(stage,'completion-alpha',alpha)
-                masks[i,y0:y1,x0:x1]=torch.maximum(visible_crop,alpha*hole_crop)
+                # Continuous surfaces retain the bounded surface estimate. Other
+                # targets may extend into generated context according to SAM.
+                if surface:
+                    alpha=tensor(background_removal_mask(pil(hole_crop,'L'),2,0))
+                permitted=fill
+                merged=tensor(merge_completion_alpha(
+                    pil(visible_crop,'L'),pil(alpha,'L'),pil(hole_crop,'L'),
+                    pil(permitted,'L'),manual=bool(region),seam_radius=2))
+                if not ((merged>visible_crop+.1)&(hole_crop>0)).any():
+                    raise ValueError(f'Completion did not join visible {layer["name"]}; review its region or segmentation.')
+                # Newly accepted alpha needs generated RGB even beyond the old
+                # estimated hole; otherwise original occluder pixels reappear.
+                extension=(merged>visible_crop).float()*(visible_crop<=0)
+                final_blend=torch.maximum(blend_crop,extension)
+                completed=crop*(1-final_blend[None,...,None])+generated*final_blend[None,...,None]
+                trace(stage,'accepted-alpha',merged)
+                trace(stage,'accepted-blend',final_blend)
+                trace(stage,'accepted-rgb',completed[0],'RGB')
+                masks[i,y0:y1,x0:x1]=merged
                 rgbs[i,y0:y1,x0:x1]=completed[0]
                 layer['mask'] = data_url(pil(masks[i], 'L'))
         for index in range(len(masks)):

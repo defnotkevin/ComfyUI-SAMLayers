@@ -204,7 +204,7 @@ class LayersTests(unittest.TestCase):
         self.assertTrue(torch.all(captures['raw-flux']==1))
         self.assertTrue(torch.equal(captures['input'],image[0]))
         self.assertTrue(torch.equal(captures['inpaint-composite'],out[0]))
-        self.assertEqual(set(captures),{'input','blend-mask','conditioning-mask','raw-flux','inpaint-composite'})
+        self.assertEqual(set(captures),{'input','blend-mask','conditioning-mask','raw-flux','color-matched','inpaint-composite'})
         self.assertEqual(tuple(seen['pixels'].shape),(1,16,32,3))
         self.assertEqual(seen['sampler'][3],1.0)
         self.assertFalse(seen['noise_mask'])
@@ -213,8 +213,8 @@ class LayersTests(unittest.TestCase):
         self.assertEqual(seen['encoded'][1][0],'')
         self.assertEqual(tuple(out.shape),tuple(image.shape))
         self.assertTrue(torch.equal(out[mask==0],image[mask==0]))
-        self.assertTrue(torch.all(out[mask==1]==1))
-        self.assertTrue(torch.allclose(out[mask==.25],torch.full_like(out[mask==.25],.4)))
+        self.assertTrue(torch.all(out[mask==1]==.75))
+        self.assertTrue(torch.allclose(out[mask==.25],torch.full_like(out[mask==.25],.3375)))
         self.assertTrue(torch.all((seen['mask']==0)|(seen['mask']==1)))
         self.assertTrue(torch.all(seen['mask'][:,:13,:19][mask>0]==1))
 
@@ -319,7 +319,7 @@ class LayersTests(unittest.TestCase):
             return torch.ones_like(image)
         mm=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
         comfy=types.ModuleType('comfy');comfy.model_management=mm
-        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=fill),patch.object(nodes,'detect',return_value=torch.ones(1,256,256)) as detect:
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=fill),patch.object(nodes,'detect',return_value=cloud[None,:256,22:278]) as detect:
             result,_=nodes.LayersReconstruct().run(p,None,None,None,None,None,'background','person, clouds',True,0,0,2,1,0,0,'independent scene layers',30,'flat colors',16,512)
         self.assertEqual(calls[1][0],(1,512,512,3))
         self.assertEqual(calls[1][1],'A complete cloud. flat colors')
@@ -362,6 +362,24 @@ class LayersTests(unittest.TestCase):
         self.assertTrue(torch.all(result['masks'][0]==1))
         self.assertTrue(torch.equal(result['rgbs'][0,0],image[0,0]))
         self.assertTrue(torch.all((calls[-1]==0)|(calls[-1]==1)))
+
+    def test_accepted_cloud_extension_uses_generated_rgb_beyond_initial_hole(self):
+        image=torch.zeros(1,96,96,3);image[...,0]=1
+        cloud=torch.zeros(96,96);cloud[20:40,20:40]=1
+        front=torch.zeros_like(cloud);front[16:60,40:65]=1
+        sky=1-torch.maximum(cloud,front)
+        p=nodes.new_project(image,torch.stack([sky,cloud,front]),['sky','cloud','person'])
+        p['state']['layers'][0]['kind']='background'
+        predicted=cloud.clone();predicted[20:40,35:63]=1
+        mm=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
+        comfy=types.ModuleType('comfy');comfy.model_management=mm
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=lambda image,*a:torch.ones_like(image)),patch.object(nodes,'detect',return_value=predicted[None]):
+            result,_=nodes.LayersReconstruct().run(p,None,None,None,None,None,'sky','',True,8,0,2,1,reconstruction_mode='independent scene layers')
+        initial=nodes.tensor(nodes.completion_region(nodes.pil(cloud,'L'),nodes.pil(front,'L'),8))
+        self.assertEqual(initial[30,60].item(),0)
+        self.assertEqual(result['masks'][1,30,60].item(),1)
+        self.assertTrue(torch.equal(result['rgbs'][1,30,60],torch.ones(3)))
+        self.assertEqual(result['masks'][1,70,70].item(),0)
 
     def test_unchanged_object_completion_is_reported(self):
         p=self.project();p['state']['layers'][0]['completion']=nodes.data_url(Image.new('L',(24,16),255))
