@@ -197,9 +197,14 @@ class LayersTests(unittest.TestCase):
         class Decode:
             def decode(self,*args):return (torch.ones(1,16,32,3),)
         fake=types.SimpleNamespace(InpaintModelConditioning=Conditioning,KSampler=Sampler,VAEDecode=Decode)
+        captures={}
         with patch.dict(sys.modules,{'nodes':fake}):
             model=types.SimpleNamespace(model=types.SimpleNamespace(model_config=types.SimpleNamespace(unet_config={'image_model':'flux','in_channels':96})))
-            out=nodes.inpaint(image,mask,model,Clip(),types.SimpleNamespace(downscale_ratio=8),'p','n',0,2,6)
+            out=nodes.inpaint(image,mask,model,Clip(),types.SimpleNamespace(downscale_ratio=8),'p','n',0,2,6,capture=lambda name,value,mode:captures.update({name:value.clone()}))
+        self.assertTrue(torch.all(captures['raw-flux']==1))
+        self.assertTrue(torch.equal(captures['input'],image[0]))
+        self.assertTrue(torch.equal(captures['inpaint-composite'],out[0]))
+        self.assertEqual(set(captures),{'input','blend-mask','conditioning-mask','raw-flux','inpaint-composite'})
         self.assertEqual(tuple(seen['pixels'].shape),(1,16,32,3))
         self.assertEqual(seen['sampler'][3],1.0)
         self.assertFalse(seen['noise_mask'])
@@ -212,6 +217,23 @@ class LayersTests(unittest.TestCase):
         self.assertTrue(torch.allclose(out[mask==.25],torch.full_like(out[mask==.25],.4)))
         self.assertTrue(torch.all((seen['mask']==0)|(seen['mask']==1)))
         self.assertTrue(torch.all(seen['mask'][:,:13,:19][mask>0]==1))
+
+    def test_diagnostic_run_records_masks_crops_and_pre_matte_layers(self):
+        p=self.project();p['state']['layers'][0].update(name='grass',kind='background')
+        hole=Image.new('L',(24,16));hole.paste(255,(8,4,12,8))
+        p['state']['layers'][0]['completion']=nodes.data_url(hole)
+        mm=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
+        comfy=types.ModuleType('comfy');comfy.model_management=mm
+        def fake_fill(image,mask,*args,capture=None):
+            if capture: capture('raw-flux',torch.ones_like(image[0]),'RGB')
+            return torch.ones_like(image)
+        with tempfile.TemporaryDirectory() as directory:
+            folders=types.SimpleNamespace(get_output_directory=lambda:directory)
+            with patch.dict(nodes.os.environ,{'SAMLayers_DEBUG_RECONSTRUCTION':'1'}),patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm,'folder_paths':folders}),patch.object(nodes,'inpaint',side_effect=fake_fill):
+                nodes.LayersReconstruct().run(p,None,None,None,None,None,'background','',True,0,0,2,1)
+            root=next(Path(directory).glob('samlayers_diagnostics_*'))
+            for name in ['settings.json','source/mask-00.png','layer-00/crop.json','layer-00/hole.png','layer-00/final-blend.png','layer-00/raw-flux.png','layer-00/sam-input.png','layer-00/completion-alpha.png','before-matting/alpha-00.png','before-matting/rgb-00.png']:
+                self.assertTrue((root/name).is_file(),name)
 
     def test_inpaint_rejects_sd_and_non_fill_flux(self):
         for config in ({}, {'image_model':'flux','in_channels':16}, {'image_model':'sd15','in_channels':96}):

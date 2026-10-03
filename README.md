@@ -546,3 +546,21 @@ outside the blend, binary conditioning coverage, single-pass seam weights,
 manual regions, silhouette bounds, surface alpha and failed
 object completion. Generated quality still requires a RunPod visual test after
 these changes are pushed.
+
+
+### Reconstruction diagnostics
+
+For a diagnostic run, start ComfyUI with `SAMLayers_DEBUG_RECONSTRUCTION=1`.
+Each reconstruction creates a unique `output/samlayers_diagnostics_*` directory.
+Capture is off by default and does not change sampling settings. These files
+contain the source image and generated content; they remain in ComfyUI output.
+
+The capture includes original masks, each hole and blend mask, crop coordinates,
+FLUX conditioning masks and prompts/seeds, raw VAE-decoded FLUX pixels before
+compositing, resized results, SAM inputs and completion alpha, and all layers
+before matting. Compare these with the regular saved project's final RGB and
+alpha to locate artifacts in generation, blending, segmentation, or matting.
+A failed completion leaves its preceding captures available for inspection.
+Restart without the environment variable to disable capture. GPU visual
+validation still requires a diagnostic run; previous runs cannot recover raw
+FLUX pixels from the final saved layers.

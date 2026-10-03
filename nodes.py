@@ -3,6 +3,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import re
 import uuid
 from pathlib import Path
@@ -447,7 +448,7 @@ def validate_flux_fill(model):
         raise ValueError('Reconstruction requires FLUX.1 Fill dev. Connect UNETLoader flux1-fill-dev.safetensors, DualCLIPLoader (type flux, CLIP-L + T5XXL), and VAELoader ae.safetensors. SD/SDXL and ordinary FLUX dev are not supported.')
 
 
-def inpaint(image, mask, model, clip, vae, prompt, negative, seed, steps, guidance):
+def inpaint(image, mask, model, clip, vae, prompt, negative, seed, steps, guidance, capture=None):
     import nodes
     validate_flux_fill(model)
     # FLUX has 2x2 latent patches, so align pixels to 16 without cropping the source.
@@ -471,7 +472,14 @@ def inpaint(image, mask, model, clip, vae, prompt, negative, seed, steps, guidan
     sampled = nodes.KSampler().sample(model, seed, steps, 1.0, 'euler', 'normal', positive, neg, latent, denoise=1.0)[0]
     generated = nodes.VAEDecode().decode(vae, sampled)[0][:, :h, :w, :3].cpu()
     alpha = mask.cpu().unsqueeze(-1)
-    return image.cpu() * (1-alpha) + generated * alpha
+    blended = image.cpu() * (1-alpha) + generated * alpha
+    if capture is not None:
+        capture('input', image[0], 'RGB')
+        capture('blend-mask', mask[0], 'L')
+        capture('conditioning-mask', conditioning_mask[0], 'L')
+        capture('raw-flux', generated[0], 'RGB')
+        capture('inpaint-composite', blended[0], 'RGB')
+    return blended
 
 
 class LayersReconstruct:
@@ -516,6 +524,33 @@ class LayersReconstruct:
         scene = reconstruction_mode == 'independent scene layers'
         if scene and (not complete_hidden or state['layers'][0].get('kind') != 'background'):
             raise ValueError('Independent scene layers requires complete_hidden enabled and a background surface (such as sky) as the backmost layer. Review layer order first.')
+        # Explicit opt-in: diagnostic images can be large and contain source data.
+        diagnostics = None
+        if os.environ.get('SAMLayers_DEBUG_RECONSTRUCTION') == '1':
+            import folder_paths
+            diagnostics = Path(folder_paths.get_output_directory()) / ('samlayers_diagnostics_' + uuid.uuid4().hex[:12])
+            diagnostics.mkdir(parents=True, exist_ok=False)
+            (diagnostics/'settings.json').write_text(json.dumps(dict(
+                seed=seed, steps=steps, guidance=flux_guidance, mode=reconstruction_mode,
+                removal_margin=removal_margin, removal_feather=removal_feather,
+                context=completion_context, resolution=completion_resolution,
+                style_prompt=style_prompt, layers=[dict(id=x['id'],name=x['name']) for x in state['layers']]
+            ), indent=2))
+        def trace(stage, name, value, mode='L'):
+            if diagnostics is not None:
+                directory=diagnostics/stage
+                directory.mkdir(exist_ok=True)
+                pil(value,mode).save(directory/(name+'.png'))
+        def run_fill(stage, *args):
+            if diagnostics is None:
+                return inpaint(*args)
+            directory=diagnostics/stage
+            directory.mkdir(exist_ok=True)
+            (directory/'prompt.json').write_text(json.dumps(dict(prompt=args[5],seed=args[7]),indent=2))
+            return inpaint(*args,capture=lambda name,value,mode:trace(stage,name,value,mode))
+        trace('source','image',image[0],'RGB')
+        for index, mask in enumerate(masks):
+            trace('source',f'mask-{index:02d}',mask)
         # Keep original occluders immutable while completing layers back to front.
         source_masks = masks.clone()
         # Legacy mode removes foreground subjects only.
@@ -532,7 +567,7 @@ class LayersReconstruct:
             base_negative = negative_prompt
         removal = tensor(background_removal_mask(pil(union, 'L'), removal_margin, removal_feather)).unsqueeze(0)
         # Native model management loads/evicts models as each stage needs them.
-        background = (inpaint(image, removal, model, clip, vae, f'{background_prompt}. Style: {style_prompt}', base_negative, seed, steps, flux_guidance)
+        background = (run_fill('base', image, removal, model, clip, vae, f'{background_prompt}. Style: {style_prompt}', base_negative, seed, steps, flux_guidance)
                       if removal.max().item() > 0 else image.clone())
         rgbs = image.repeat(len(masks), 1, 1, 1)
         if scene:
@@ -555,8 +590,15 @@ class LayersReconstruct:
                     hole = tensor(completion_region(pil(original,'L'),pil(front,'L'),expand_pixels))
                 if hole.max().item() <= 0:
                     continue
+                stage=f'layer-{i:02d}'
+                trace(stage,'visible-source',original)
+                trace(stage,'occluders',front)
+                trace(stage,'hole',hole)
                 blend = tensor(completion_blend_mask(pil(original,'L'),pil(hole,'L'),removal_feather))
                 x0,y0,x1,y1 = completion_crop(pil(original,'L'),pil(hole,'L'),completion_context)
+                if diagnostics is not None:
+                    (diagnostics/stage/'crop.json').write_text(json.dumps(dict(x0=x0,y0=y0,x1=x1,y1=y1)))
+                trace(stage,'final-blend',blend)
                 visible_crop=original[y0:y1,x0:x1]
                 hole_crop=hole[y0:y1,x0:x1]
                 # Erase occluders and the transition band in model conditioning.
@@ -579,7 +621,7 @@ class LayersReconstruct:
                 surface=layer.get('kind')=='background' and bool(re.search(
                     r'\b(sky|grass|hill|hills|ground|floor|wall|ceiling|water)\b',description,re.I))
                 prompt=(f'Continuous {description}. ' if surface else f'A complete {description}. ')+style_prompt
-                generated=inpaint(pixels,fill_scaled,model,clip,vae,prompt,'',
+                generated=run_fill(stage,pixels,fill_scaled,model,clip,vae,prompt,'',
                                   (seed+i+1) % (2**64),steps,flux_guidance)
                 generated=torch.nn.functional.interpolate(generated.movedim(-1,1),size=(ch,cw),mode='bilinear',align_corners=False).movedim(1,-1)
                 # Apply the soft transition once, at source resolution. Blending
@@ -588,6 +630,9 @@ class LayersReconstruct:
                 # SAM sees the erased context too, not the original occluder
                 # restored outside the final cutout's permitted RGB blend.
                 segmentation_image=crop*(1-fill[None,...,None])+generated*fill[None,...,None]
+                trace(stage,'resized-generated',generated[0],'RGB')
+                trace(stage,'sam-input',segmentation_image[0],'RGB')
+                trace(stage,'source-resolution-composite',completed[0],'RGB')
                 if surface:
                     # A continuous surface fills its bounded occlusion region. SAM
                     # must not punch the old subject silhouette back out of this fill.
@@ -605,9 +650,13 @@ class LayersReconstruct:
                     alpha=candidates[score.argmax()]
                     if not ((alpha>.5)&(hole_crop>.5)).any():
                         raise ValueError(f'Completion added no pixels to {layer["name"]}. Review its hidden-area mask or description; the layer is not complete.')
+                trace(stage,'completion-alpha',alpha)
                 masks[i,y0:y1,x0:x1]=torch.maximum(visible_crop,alpha*hole_crop)
                 rgbs[i,y0:y1,x0:x1]=completed[0]
                 layer['mask'] = data_url(pil(masks[i], 'L'))
+        for index in range(len(masks)):
+            trace('before-matting',f'rgb-{index:02d}',rgbs[index],'RGB')
+            trace('before-matting',f'alpha-{index:02d}',masks[index])
         result = dict(project, background=None if scene else background, masks=masks, rgbs=rgbs, state=state)
         # A new editor source signature invalidates only stale downstream edit sessions.
         result['source'] = hash_project(rgbs, masks, [x['name'] for x in state['layers']]) + hash_project(background, masks, [])
