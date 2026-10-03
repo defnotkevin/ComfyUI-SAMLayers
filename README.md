@@ -440,8 +440,8 @@ composite that output underneath the editable stack or it will duplicate the bas
 
 Layers above the base use the original occluder masks and a silhouette envelope to
 estimate hidden regions. Local crops include the target and bounded context.
-Completed object shapes are resegmented; named continuous surfaces retain their
-bounded filled alpha region.
+Completed object and surface shapes are resegmented; the base alone retains its
+full-canvas opaque alpha.
 Paint **Hidden area to reconstruct** to correct an estimated completion region.
 Transforms are applied after reconstruction. Moving the completed base itself can
 expose transparency at canvas edges. This mode derives a short positive base prompt from its
@@ -530,10 +530,10 @@ SAM may accept connected parts of the target within that generated context.
 The initial automatic hole is a generation hint, not a hard clipping polygon.
 Disconnected instances are excluded. Painted completion regions remain hard limits.
 
-Background layers named sky, grass, hill(s), ground, floor, wall, ceiling or water
-are treated as continuous surfaces: their bounded completion alpha is retained
-without SAM punching out the old occluder silhouette. Other objects, including
-clouds, are resegmented within the local crop. A completion that adds no object
+All completed layers, including grass and other surfaces, are resegmented within
+the local crop. The estimated hole does not become opaque by itself: the
+reconstructed target must be found there by SAM. This prevents the former
+occluder shape from becoming part of a surface above its actual boundary. A completion that adds no object
 pixels now raises an actionable error instead of silently succeeding. This check
 is not a guarantee of complete or correct hidden geometry.
 
@@ -574,7 +574,11 @@ Before compositing, reconstruction estimates a smooth RGB correction from
 unremoved source context and propagates it through the generated region. This
 corrects broad color/lighting drift without imposing a palette or flattening
 generated texture. Corrections are bounded to 0.25 per channel; fewer than 16
-reference pixels leave the output uncorrected. This is not a style classifier,
+compatible reference pixels leave the output uncorrected. Source/generated
+pairs differing by more than 0.15 in any channel, plus a two-pixel neighborhood,
+are excluded from correction anchors: they may represent changed geometry or
+different materials rather than a color shift. Large genuine lighting shifts
+may therefore remain uncorrected. This is not a style classifier,
 texture validator, or guarantee of a seamless result. Abrupt material changes,
 small reference regions, and large hallucinations still require visual review.
 
@@ -583,7 +587,8 @@ target inside generated context, instead of clipping them to the initial convex
 hole estimate. Newly accepted pixels receive generated RGB too. A two-pixel
 closing near the hole repairs narrow alpha cracks; it does not repair broad
 segmentation errors. Manual painted regions are never expanded by this merge.
-Continuous-surface completion keeps its estimated region with a narrow join band.
+Surface completion also uses SAM's recovered shape; it no longer makes the
+entire estimated region opaque.
 Diagnostic runs additionally capture `color-matched`, `accepted-alpha`,
 `accepted-blend`, and `accepted-rgb` to distinguish each correction stage.
 

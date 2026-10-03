@@ -120,7 +120,7 @@ class QualityRegressionTests(unittest.TestCase):
         import numpy as np
         source=np.zeros((32,32,3),dtype='float32');gen=np.full_like(source,.8)
         self.assertTrue(np.array_equal(module.match_boundary_colors(source,gen,np.zeros((32,32))),gen))
-        self.assertTrue(np.allclose(module.match_boundary_colors(source,gen,np.ones((32,32))),.55))
+        self.assertTrue(np.array_equal(module.match_boundary_colors(source,gen,np.ones((32,32))),gen))
 
     def test_automatic_completion_keeps_round_shape_beyond_estimated_hole(self):
         from PIL import ImageDraw
@@ -156,3 +156,21 @@ class QualityRegressionTests(unittest.TestCase):
         merged=module.merge_completion_alpha(visible,predicted,hole,predicted,manual=True)
         self.assertEqual(merged.getpixel((15,15)),255)
         self.assertEqual(merged.getpixel((21,15)),0)
+
+
+class MaterialBoundaryTests(unittest.TestCase):
+    def test_new_white_shape_does_not_pick_up_blue_from_old_background(self):
+        import numpy as np
+        source=np.full((96,96,3),[.35,.55,.95],dtype='float32')
+        generated=source.copy();source[25:50,40:65]=1;generated[15:70,30:75]=1
+        known=np.ones((96,96),dtype='float32');known[40:65,40:65]=0
+        matched=module.match_boundary_colors(source,generated,known)
+        self.assertTrue(np.allclose(matched[15:70,30:75],1))
+
+    def test_disagreement_rejection_still_corrects_small_valid_color_offset(self):
+        import numpy as np
+        src=np.full((64,64,3),.6,dtype='float32')
+        gen=np.full_like(src,.55);src[20:25,20:25]=0
+        known=np.ones((64,64),dtype='float32');known[28:50,28:50]=0
+        matched=module.match_boundary_colors(src,gen,known)
+        self.assertLess(float(abs(matched[32:45,32:45]-.6).max()),1e-5)

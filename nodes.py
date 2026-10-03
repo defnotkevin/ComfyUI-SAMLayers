@@ -638,28 +638,21 @@ class LayersReconstruct:
                 trace(stage,'resized-generated',generated[0],'RGB')
                 trace(stage,'sam-input',segmentation_image[0],'RGB')
                 trace(stage,'source-resolution-composite',completed[0],'RGB')
-                if surface:
-                    # A continuous surface fills its bounded occlusion region. SAM
-                    # must not punch the old subject silhouette back out of this fill.
-                    alpha=torch.ones_like(hole_crop)
+                if layer.get('discovery')=='automatic':
+                    interior=torch.nn.functional.avg_pool2d(visible_crop[None,None],7,stride=1,padding=3)[0,0]*visible_crop
+                    index=int(interior.argmax())
+                    candidates=detect(sam_model,segmentation_image,positive=[{'x':index % cw,'y':index // cw}])
                 else:
-                    if layer.get('discovery')=='automatic':
-                        interior=torch.nn.functional.avg_pool2d(visible_crop[None,None],7,stride=1,padding=3)[0,0]*visible_crop
-                        index=int(interior.argmax())
-                        candidates=detect(sam_model,segmentation_image,positive=[{'x':index % cw,'y':index // cw}])
-                    else:
-                        candidates=detect(sam_model,segmentation_image,sam_clip,description)
-                    if not len(candidates) or not candidates.max().item():
-                        raise ValueError(f'Could not segment reconstructed {layer["name"]}; adjust its completion region or description.')
-                    score=(candidates*visible_crop).sum((1,2))/(candidates+visible_crop-candidates*visible_crop).sum((1,2)).clamp_min(1)
-                    alpha=candidates[score.argmax()]
-                    if not ((alpha>.5)&(hole_crop>.5)).any():
-                        raise ValueError(f'Completion added no pixels to {layer["name"]}. Review its hidden-area mask or description; the layer is not complete.')
+                    candidates=detect(sam_model,segmentation_image,sam_clip,description)
+                if not len(candidates) or not candidates.max().item():
+                    raise ValueError(f'Could not segment reconstructed {layer["name"]}; adjust its completion region or description.')
+                score=(candidates*visible_crop).sum((1,2))/(candidates+visible_crop-candidates*visible_crop).sum((1,2)).clamp_min(1)
+                alpha=candidates[score.argmax()]
+                if not ((alpha>.5)&(hole_crop>.5)).any():
+                    raise ValueError(f'Completion added no pixels to {layer["name"]}. Review its hidden-area mask or description; the layer is not complete.')
                 trace(stage,'completion-alpha',alpha)
-                # Continuous surfaces retain the bounded surface estimate. Other
-                # targets may extend into generated context according to SAM.
-                if surface:
-                    alpha=tensor(background_removal_mask(pil(hole_crop,'L'),2,0))
+                # All layers, including terrain and other surfaces, must follow
+                # the reconstructed target's segmentation, not the occluder shape.
                 permitted=fill
                 merged=tensor(merge_completion_alpha(
                     pil(visible_crop,'L'),pil(alpha,'L'),pil(hole_crop,'L'),

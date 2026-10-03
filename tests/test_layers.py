@@ -213,8 +213,8 @@ class LayersTests(unittest.TestCase):
         self.assertEqual(seen['encoded'][1][0],'')
         self.assertEqual(tuple(out.shape),tuple(image.shape))
         self.assertTrue(torch.equal(out[mask==0],image[mask==0]))
-        self.assertTrue(torch.all(out[mask==1]==.75))
-        self.assertTrue(torch.allclose(out[mask==.25],torch.full_like(out[mask==.25],.3375)))
+        self.assertTrue(torch.all(out[mask==1]==1))
+        self.assertTrue(torch.allclose(out[mask==.25],torch.full_like(out[mask==.25],.4)))
         self.assertTrue(torch.all((seen['mask']==0)|(seen['mask']==1)))
         self.assertTrue(torch.all(seen['mask'][:,:13,:19][mask>0]==1))
 
@@ -229,7 +229,7 @@ class LayersTests(unittest.TestCase):
             return torch.ones_like(image)
         with tempfile.TemporaryDirectory() as directory:
             folders=types.SimpleNamespace(get_output_directory=lambda:directory)
-            with patch.dict(nodes.os.environ,{'SAMLayers_DEBUG_RECONSTRUCTION':'1'}),patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm,'folder_paths':folders}),patch.object(nodes,'inpaint',side_effect=fake_fill):
+            with patch.dict(nodes.os.environ,{'SAMLayers_DEBUG_RECONSTRUCTION':'1'}),patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm,'folder_paths':folders}),patch.object(nodes,'inpaint',side_effect=fake_fill),patch.object(nodes,'detect',return_value=torch.ones(1,16,24)):
                 nodes.LayersReconstruct().run(p,None,None,None,None,None,'background','',True,0,0,2,1)
             root=next(Path(directory).glob('samlayers_diagnostics_*'))
             for name in ['settings.json','source/mask-00.png','layer-00/crop.json','layer-00/hole.png','layer-00/final-blend.png','layer-00/raw-flux.png','layer-00/sam-input.png','layer-00/completion-alpha.png','before-matting/alpha-00.png','before-matting/rgb-00.png']:
@@ -330,15 +330,15 @@ class LayersTests(unittest.TestCase):
         self.assertTrue(torch.equal(result['rgbs'][1][~hole],image[0][~hole]))
         self.assertTrue(torch.all(result['rgbs'][1][hole]==1))
 
-    def test_surface_completion_keeps_fill_without_sam_rejection(self):
+    def test_surface_completion_uses_reconstructed_segmentation(self):
         p=self.project();p['state']['layers'][0].update(name='grass',kind='background')
         region=Image.new('L',(24,16));region.paste(255,(8,4,12,8))
         p['state']['layers'][0]['completion']=nodes.data_url(region)
         mm=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
         comfy=types.ModuleType('comfy');comfy.model_management=mm
-        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=lambda image,*a:torch.ones_like(image)),patch.object(nodes,'detect') as detect:
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=lambda image,*a:torch.ones_like(image)),patch.object(nodes,'detect',return_value=torch.ones(1,16,24)) as detect:
             result,_=nodes.LayersReconstruct().run(p,None,None,None,None,None,'background','',True,0,0,2,1)
-        detect.assert_not_called()
+        detect.assert_called_once()
         self.assertTrue(torch.all(result['masks'][0,4:8,8:12]==1))
 
     def test_surface_blends_once_without_changing_alpha_or_distant_pixels(self):
@@ -354,7 +354,7 @@ class LayersTests(unittest.TestCase):
         def fill(image,mask,*args):
             calls.append(mask)
             return image*(1-mask[...,None])+mask[...,None]
-        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=fill):
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=fill),patch.object(nodes,'detect',return_value=torch.ones(1,96,96)):
             result,_=nodes.LayersReconstruct().run(p,None,None,None,None,None,'background','',True,0,0,2,1,removal_feather=4,completion_resolution=384)
         blend=nodes.tensor(nodes.completion_blend_mask(nodes.pil(visible,'L'),hole,4))
         expected=image[0]*(1-blend[...,None])+blend[...,None]
@@ -380,6 +380,22 @@ class LayersTests(unittest.TestCase):
         self.assertEqual(result['masks'][1,30,60].item(),1)
         self.assertTrue(torch.equal(result['rgbs'][1,30,60],torch.ones(3)))
         self.assertEqual(result['masks'][1,70,70].item(),0)
+
+    def test_surface_alpha_does_not_copy_occluder_above_its_boundary(self):
+        image=torch.full((1,96,96,3),.5)
+        grass=torch.zeros(96,96);grass[50:]=1
+        person=torch.zeros_like(grass);person[20:85,40:55]=1
+        visible=grass*(1-person)
+        p=nodes.new_project(image,torch.stack([visible,person]),['grass','person'])
+        p['state']['layers'][0]['kind']='background'
+        p['state']['layers'][0]['completion']=nodes.data_url(nodes.pil(person,'L'))
+        mm=types.SimpleNamespace(throw_exception_if_processing_interrupted=lambda:None)
+        comfy=types.ModuleType('comfy');comfy.model_management=mm
+        with patch.dict(sys.modules,{'comfy':comfy,'comfy.model_management':mm}),patch.object(nodes,'inpaint',side_effect=lambda image,*a:torch.ones_like(image)),patch.object(nodes,'detect',return_value=grass[None]):
+            result,_=nodes.LayersReconstruct().run(p,None,None,None,None,None,'sky','',True,8,0,2,1)
+        self.assertEqual(result['masks'][0,30,48].item(),0)
+        self.assertEqual(result['masks'][0,60,48].item(),1)
+        self.assertTrue(torch.equal(result['masks'][0],grass))
 
     def test_unchanged_object_completion_is_reported(self):
         p=self.project();p['state']['layers'][0]['completion']=nodes.data_url(Image.new('L',(24,16),255))

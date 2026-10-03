@@ -108,6 +108,12 @@ def match_boundary_colors(source, generated, known, max_shift=.25):
         raise ValueError('Color matching inputs must be finite.')
     if weight.min()<0 or weight.max()>1 or not 0<=max_shift<=1:
         raise ValueError('Invalid color matching confidence or shift limit.')
+    # New geometry can cross into an unmasked reference pixel (e.g. a completed
+    # cloud over old sky). Such pairs describe different materials, not a color
+    # offset. Reject large discrepancies and a small neighborhood around them.
+    compatible=(np.abs(src-gen).max(axis=-1)<=.15)
+    compatible=np.asarray(Image.fromarray(compatible.astype('uint8')*255).filter(ImageFilter.MinFilter(5)))>0
+    weight=weight*compatible
     if weight.sum()<16 or max_shift==0:
         return gen.copy()
     h,w=weight.shape
